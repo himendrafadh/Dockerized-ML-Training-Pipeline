@@ -1,7 +1,7 @@
 """AutoML Platform: Streamlit dashboard that drives the preprocess -> train pipeline.
 
 Layout
-    Sidebar : upload CSV -> pick target -> Run Pipeline
+    Sidebar : upload CSV -> pick target -> Train model
     Main    : welcome screen | live pipeline progress | results dashboard
               (KPI row, tabbed plots, downloads, experiment history)
 
@@ -38,18 +38,39 @@ STEPS = [
 ]
 SEPARATOR_NAMES = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}
 
-st.set_page_config(page_title="AutoML Platform", page_icon="📊", layout="wide")
+st.set_page_config(page_title="AutoML Platform", layout="wide")
+
+# Light-touch polish on top of .streamlit/config.toml: tighter page padding,
+# quieter metric labels, and a visible keyboard focus ring in the accent color.
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2.5rem; padding-bottom: 4rem; max-width: 1200px; }
+    h1 { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.01em; }
+    h3 { font-weight: 600; margin-top: 1.5rem; }
+    [data-testid="stMetricLabel"] p { font-size: 0.8rem; color: #4B524F; }
+    [data-testid="stMetricValue"] { font-size: 1.6rem; font-weight: 600; }
+    [data-testid="stSidebar"] { border-right: 1px solid #D9DCD8; }
+    button:focus-visible, [role="tab"]:focus-visible, a:focus-visible {
+        outline: 2px solid #0F766E !important; outline-offset: 2px;
+    }
+    button, [role="tab"], summary, label { cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 def fmt(value, digits: int = 3) -> str:
-    """Format a number for display; anything missing/invalid becomes an em dash."""
+    """Format a number for display; anything missing/invalid becomes a dash."""
     try:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
-        return "—"
+        return "-"
 
 
 def save_upload(uploaded) -> None:
@@ -78,7 +99,7 @@ def show_image(path: Path | None, missing_label: str) -> None:
     if path is not None and path.exists():
         st.image(str(path), width="stretch")
     else:
-        st.warning(f"{missing_label} is not available for this run.", icon="⚠️")
+        st.warning(f"{missing_label} is not available for this run.")
 
 
 def load_latest_run() -> tuple[pd.Series, pd.DataFrame, Path | None, dict] | None:
@@ -114,17 +135,17 @@ def load_latest_run() -> tuple[pd.Series, pd.DataFrame, Path | None, dict] | Non
 def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
     """Upload + target selection + run button. Returns (target, clicked, preview)."""
     with st.sidebar:
-        st.title("📊 AutoML Platform")
+        st.subheader("AutoML Platform")
         st.caption(
             "Upload any binary-classification dataset, choose what to predict, and get an "
             "imbalance-aware, explainable XGBoost model in one click."
         )
         st.divider()
 
-        uploaded = st.file_uploader("**1 · Upload dataset**", type=["csv", "tsv", "txt"],
+        uploaded = st.file_uploader("1. Upload dataset", type=["csv", "tsv", "txt"],
                                     help="Separator (, ; tab |) and encoding are detected automatically.")
         if uploaded is None:
-            st.caption("Waiting for a dataset…")
+            st.caption("No dataset uploaded yet.")
             return None, False, None
 
         save_upload(uploaded)
@@ -140,7 +161,7 @@ def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
         st.success(f"**{uploaded.name}**  \n{preview.shape[1]} columns · {sep}-separated")
 
         columns = list(preview.columns)
-        target = st.selectbox("**2 · Select the Target Column to Predict**", columns,
+        target = st.selectbox("2. Target column to predict", columns,
                               index=len(columns) - 1)
 
         # Early, non-blocking hint: the pipeline itself performs the real validation.
@@ -148,11 +169,11 @@ def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
         # Only >2 is conclusive: a sorted file can show a single class in the first rows.
         if n_classes > 2:
             st.warning(f"`{target}` already has {n_classes} distinct values in the first "
-                       f"{PREVIEW_ROWS} rows. Binary classification needs exactly 2.", icon="⚠️")
+                       f"{PREVIEW_ROWS} rows. Binary classification needs exactly 2.")
 
-        clicked = st.button("🚀 Run Pipeline", type="primary", width="stretch")
+        clicked = st.button("Train model", type="primary", width="stretch")
         st.divider()
-        st.caption("Pipeline: `preprocess.py` → `train.py` → DIY experiment logger")
+        st.caption("Pipeline: `preprocess.py`, then `train.py`, then the experiment logger.")
         return target, clicked, preview
 
 
@@ -160,21 +181,15 @@ def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
 # Main-area sections
 # --------------------------------------------------------------------------- #
 def render_welcome() -> None:
-    st.info("👈 **Get started:** upload a CSV file in the sidebar.", icon="ℹ️")
-    st.markdown("#### How it works")
-    cols = st.columns(3)
-    steps = [
-        ("📤 1. Upload", "Any binary-classification CSV. Separator and encoding are detected "
-                         "automatically."),
-        ("🎯 2. Pick a target", "Choose the column to predict. It must contain exactly two classes "
-                               "(e.g. Yes/No, 1/0, M/B)."),
-        ("🚀 3. Run", "The pipeline cleans the data, trains XGBoost, tunes the decision threshold "
-                     "for maximum F1 and explains the model with SHAP."),
-    ]
-    for col, (title, body) in zip(cols, steps):
-        with col.container(border=True):
-            st.markdown(f"**{title}**")
-            st.caption(body)
+    st.markdown("#### Upload a CSV in the sidebar to begin")
+    st.markdown(
+        "1. **Upload** a binary-classification CSV. Separator and encoding are detected "
+        "automatically.\n"
+        "2. **Pick the target column.** It must contain exactly two classes "
+        "(e.g. Yes/No, 1/0, M/B).\n"
+        "3. **Train.** The pipeline cleans the data, trains XGBoost, tunes the decision "
+        "threshold for maximum F1 and explains the model with SHAP."
+    )
 
     with st.expander("What happens under the hood?"):
         st.markdown(
@@ -190,11 +205,11 @@ def render_welcome() -> None:
 
 def run_pipeline(target: str) -> bool:
     """Execute every stage with live progress feedback. Returns True on success."""
-    progress = st.progress(0.0, text="Running MLOps Pipeline...")
+    progress = st.progress(0.0, text="Starting pipeline...")
     logs: list[tuple[str, str]] = []
     ok = True
 
-    with st.status("Running MLOps Pipeline...", expanded=True) as status:
+    with st.status("Training pipeline...", expanded=True) as status:
         for i, (label, script) in enumerate(STEPS, start=1):
             st.write(f"**Step {i}/{len(STEPS)}:** {label}…")
             progress.progress((i - 1) / len(STEPS), text=f"Step {i}/{len(STEPS)}: {label}…")
@@ -223,12 +238,12 @@ def run_pipeline(target: str) -> bool:
             st.markdown(f"**{label}**")
             st.code(text, language="text")
     if ok:
-        st.toast("Model trained successfully!", icon="✅")
+        st.toast("Model trained successfully.")
     return ok
 
 
 def render_dataset_preview(preview: pd.DataFrame, target: str | None) -> None:
-    with st.expander(f"🔎 Dataset preview (first {min(len(preview), 10)} rows)", expanded=False):
+    with st.expander(f"Dataset preview (first {min(len(preview), 10)} rows)", expanded=False):
         st.dataframe(preview.head(10), width="stretch", hide_index=True)
         if target:
             st.caption(f"Selected target: **{target}**")
@@ -241,7 +256,7 @@ def render_dashboard() -> None:
     last, log, run_dir, details = latest
     m = details.get("metrics", {})
 
-    st.markdown("### 📈 Results dashboard")
+    st.markdown("### Results")
     meta_bits = [f"Run `{last['Timestamp']}`", f"target **{last['Target_Column']}**"]
     if "positive_class" in details:
         meta_bits.append(f"positive class (1): **{details['positive_class']}**")
@@ -271,8 +286,8 @@ def render_dashboard() -> None:
         return run_dir / name if run_dir is not None else None
 
     tab_cm, tab_pr, tab_shap, tab_hist = st.tabs([
-        "📊 Confusion Matrix & ROC", "🎯 Precision-Recall Analysis",
-        "🧠 Explainable AI (SHAP)", "🗂️ Experiment History",
+        "Confusion matrix & ROC", "Precision-recall",
+        "Explainability (SHAP)", "Experiment history",
     ])
     with tab_cm:
         left, right = st.columns(2)
@@ -313,7 +328,7 @@ def render_dashboard() -> None:
         st.caption(f"{len(log)} run(s) recorded in `outputs/experiments_log.csv`.")
 
     # ---- Downloads ----
-    st.markdown("### ⬇️ Downloads")
+    st.markdown("### Downloads")
     files = [
         ("Trained model", "xgboost_model.json", "application/json", plot("xgboost_model.json")),
         ("Run metrics", "run_metrics.json", "application/json", plot("run_metrics.json")),
@@ -333,7 +348,7 @@ def render_dashboard() -> None:
 # --------------------------------------------------------------------------- #
 target, run_clicked, preview = render_sidebar()
 
-st.title("Mini-AutoML: XGBoost Pipeline")
+st.title("Mini-AutoML")
 st.caption("Universal binary classification · F1-optimised threshold · explainable AI · "
            "DIY experiment tracking")
 
@@ -344,7 +359,7 @@ else:
     if run_clicked and target:
         run_pipeline(target)
     elif not LOG_PATH.exists():
-        st.info("👈 Select the target column and click **Run Pipeline** to train a model.", icon="ℹ️")
+        st.info("Select the target column, then click **Train model**.")
 
 if LOG_PATH.exists():
     st.divider()

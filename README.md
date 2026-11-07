@@ -1,4 +1,4 @@
-# 🤖 Mini-MLaaS Platform: Universal AutoML Web App with DIY Experiment Tracker
+# Mini-MLaaS Platform: Universal AutoML Web App with DIY Experiment Tracker
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)
@@ -10,7 +10,7 @@
 
 ---
 
-## 📌 Project Overview
+## Project Overview
 
 **Mini-MLaaS** is a Dockerized, end-to-end *Machine Learning as a Service* platform. Upload **any binary-classification CSV** through a Streamlit web UI, pick the column to predict, and the platform runs a two-stage pipeline: universal data cleaning, then imbalance-aware XGBoost training with an F1-optimised decision threshold and SHAP explanations.
 
@@ -18,34 +18,34 @@ Instead of using MLflow or another tracking server, the project includes a **cus
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- 🌐 **Universal AutoML.** Accepts any binary-classification CSV and cleans it automatically:
+- **Universal AutoML.** Accepts any binary-classification CSV and cleans it automatically:
   - drops ID-like columns (every value unique), constant columns, empty columns and very high-cardinality text columns
   - neutralises the `" "` *space trap* in every text column (for example, IBM Telco's `TotalCharges`) and casts numeric-looking text to float
   - imputes missing values (median for numeric, mode for categorical) and one-hot encodes categoricals
   - encodes the target to `1/0`, recognising `Yes/No`, `True/False` and `1/0` labels and otherwise treating the minority class as positive
   - drops any feature that almost exactly matches the target (correlation ≥ 0.98) as a guard against data leakage
-- 📒 **Zero-Dependency DIY Tracker.** A custom logger built only on `csv`, `json` and `pathlib`:
+- **Zero-Dependency DIY Tracker.** A custom logger built only on `csv`, `json` and `pathlib`:
   - appends every run's hyperparameters and metrics to a central `outputs/experiments_log.csv`
   - saves the SHAP plot, model binary (`xgboost_model.json`) and full metrics (`run_metrics.json`) in a timestamped folder: `outputs/run_YYYYMMDD_HHMMSS/`
-- ⚖️ **Dynamic ML Optimization.**
+- **Dynamic ML Optimization.**
   - calculates `scale_pos_weight = #negatives / #positives` from the training data
   - sweeps decision thresholds from **0.1 to 0.9** on `predict_proba()` output and keeps the one with the **highest F1-Score**
   - reports F1, Precision, Recall and PR-AUC
-- 🔍 **Explainable AI (XAI).** Generates a SHAP summary plot for every run, so you can see which features drive the model's predictions.
-- 🐳 **Containerized UI.** The Streamlit frontend ships as a single Docker Compose service with a healthcheck, ready to run with one command.
+- **Explainable AI (XAI).** Generates a SHAP summary plot for every run, so you can see which features drive the model's predictions.
+- **Containerized UI.** The Streamlit frontend ships as a single Docker Compose service with a healthcheck, ready to run with one command.
 
 ---
 
-## 🏗️ System Architecture / Data Flow
+## System Architecture / Data Flow
 
 ```mermaid
 flowchart LR
-    A[📤 Upload CSV<br/>Streamlit UI] -->|saved as data/raw/dataset.csv| B[🧹 src/preprocess.py<br/>Universal cleaning]
-    B -->|train.parquet / test.parquet| C[🧠 src/train.py<br/>XGBoost + F1 threshold + SHAP]
-    C --> D[📒 DIY Logger<br/>experiments_log.csv<br/>outputs/run_TIMESTAMP/]
-    D --> E[📊 Streamlit UI<br/>Metrics · SHAP · Model download]
+    A[Upload CSV<br/>Streamlit UI] -->|saved as data/raw/dataset.csv| B[src/preprocess.py<br/>Universal cleaning]
+    B -->|train.parquet / test.parquet| C[src/train.py<br/>XGBoost + F1 threshold + SHAP]
+    C --> D[DIY Logger<br/>experiments_log.csv<br/>outputs/run_TIMESTAMP/]
+    D --> E[Streamlit UI<br/>Metrics · SHAP · Model download]
 ```
 
 1. **Upload:** `src/app.py` saves the uploaded file to `data/raw/dataset.csv` and asks for the target column.
@@ -58,7 +58,7 @@ flowchart LR
 
 ---
 
-## 📁 Folder Structure
+## Folder Structure
 
 ```text
 .
@@ -82,9 +82,9 @@ flowchart LR
 
 ---
 
-## 🚀 Quick Start (How to Run)
+## Quick Start (How to Run)
 
-### 🐳 Option A: Docker (recommended)
+### Option A: Docker (recommended)
 
 ```bash
 git clone https://github.com/himendrafadh/Dockerized-ML-Training-Pipeline.git
@@ -92,13 +92,13 @@ cd Dockerized-ML-Training-Pipeline
 docker compose up --build
 ```
 
-Then open the web UI at **👉 http://localhost:8501**
+Then open the web UI at **http://localhost:8501**
 
 1. Upload a binary-classification `.csv`.
 2. Choose a column under **"Select the Target Column to Predict"**.
 3. Click **Run Pipeline** and review the metrics, SHAP plot and experiment history.
 
-### 🐍 Option B: Local Python environment
+### Option B: Local Python environment
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -115,7 +115,7 @@ python src/train.py --target Churn --max-depth 5 --learning-rate 0.05 --n-estima
 
 ---
 
-## 📒 Experiment Log Format
+## Experiment Log Format
 
 `outputs/experiments_log.csv` gets one new row per run:
 
@@ -125,7 +125,7 @@ python src/train.py --target Churn --max-depth 5 --learning-rate 0.05 --n-estima
 
 ---
 
-## 🖼️ Screenshots
+## Screenshots
 
 ### Web UI: Upload & Target Selection
 ![Upload and target selection](docs/screenshots/ui_upload.png)
@@ -136,11 +136,11 @@ python src/train.py --target Churn --max-depth 5 --learning-rate 0.05 --n-estima
 ### SHAP Summary Plot
 ![SHAP summary plot](docs/screenshots/shap_summary.png)
 
-> 📝 *Replace the placeholder images above with your own screenshots in `docs/screenshots/`.*
+> *Replace the placeholder images above with your own screenshots in `docs/screenshots/`.*
 
 ---
 
-## 🧰 Tech Stack
+## Tech Stack
 
 | Layer | Tools |
 |---|---|
@@ -152,7 +152,7 @@ python src/train.py --target Churn --max-depth 5 --learning-rate 0.05 --n-estima
 
 ---
 
-## 💡 Engineering Notes
+## Engineering Notes
 
 - **Why no MLflow?** Building the tracker by hand shows the core ideas behind experiment tracking (run IDs, saved artifacts, a log you only ever add to) without depending on a separate tracking server.
 - **Leakage awareness:** the pipeline drops features that almost exactly match the target, but columns derived from the outcome (for example, a vendor-provided "churn score") should still be removed before upload.
