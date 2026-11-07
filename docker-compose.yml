@@ -1,0 +1,42 @@
+services:
+  mlflow-server:
+    build: .
+    image: telco-churn-mlops:latest
+    container_name: mlflow-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/app/mlruns
+      - ./mlartifacts:/app/mlartifacts
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////app/mlruns/mlflow.db
+      --serve-artifacts
+      --artifacts-destination /app/mlartifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  ml-pipeline:
+    image: telco-churn-mlops:latest
+    container_name: ml-pipeline
+    depends_on:
+      mlflow-server:
+        condition: service_healthy
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    volumes:
+      - ./data:/app/data
+      - ./mlruns:/app/mlruns
+      - ./mlartifacts:/app/mlartifacts
+      - ./src:/app/src
+      - ./outputs:/app/outputs
+    command: >
+      sh -c "python src/preprocess.py &&
+             python src/train.py --output-dir outputs"
