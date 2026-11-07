@@ -145,9 +145,10 @@ def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
 
         # Early, non-blocking hint: the pipeline itself performs the real validation.
         n_classes = preview[target].replace(r"^\s*$", pd.NA, regex=True).nunique(dropna=True)
-        if n_classes != 2:
-            st.warning(f"`{target}` has {n_classes} distinct values in the first {PREVIEW_ROWS} "
-                       "rows. Binary classification needs exactly 2.", icon="⚠️")
+        # Only >2 is conclusive: a sorted file can show a single class in the first rows.
+        if n_classes > 2:
+            st.warning(f"`{target}` already has {n_classes} distinct values in the first "
+                       f"{PREVIEW_ROWS} rows. Binary classification needs exactly 2.", icon="⚠️")
 
         clicked = st.button("🚀 Run Pipeline", type="primary", width="stretch")
         st.divider()
