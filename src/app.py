@@ -1,8 +1,13 @@
-"""Mini-AutoML: Streamlit front-end that drives the preprocess -> train pipeline.
+"""AutoML Platform: Streamlit dashboard that drives the preprocess -> train pipeline.
 
-Flow: upload CSV -> pick target column -> Run Pipeline -> view metrics + SHAP.
-The UI never imports the ML code; it calls the CLI scripts via subprocess so the
-web layer stays decoupled from the pipeline.
+Layout
+    Sidebar : upload CSV -> pick target -> Run Pipeline
+    Main    : welcome screen | live pipeline progress | results dashboard
+              (KPI row, tabbed plots, downloads, experiment history)
+
+The UI never imports the ML training code; it calls the CLI scripts via
+subprocess, so the web layer stays decoupled from the pipeline. The only shared
+helper is the CSV reader, so the UI and the pipeline see identical columns.
 """
 
 from __future__ import annotations
@@ -17,23 +22,42 @@ import streamlit as st
 
 from preprocess import read_dataset  # shared reader (Streamlit puts src/ on sys.path)
 
+# --------------------------------------------------------------------------- #
+# Paths & constants
+# --------------------------------------------------------------------------- #
 ROOT = Path(__file__).resolve().parent.parent  # /app inside Docker
 RAW_PATH = ROOT / "data" / "raw" / "dataset.csv"
-META_PATH = ROOT / "data" / "processed" / "metadata.json"
 OUTPUT_DIR = ROOT / "outputs"
 LOG_PATH = OUTPUT_DIR / "experiments_log.csv"
 PIPELINE_TIMEOUT_S = 1800
+PREVIEW_ROWS = 200
+
+STEPS = [
+    ("Validating & preprocessing data", "src/preprocess.py"),
+    ("Training XGBoost, tuning threshold & generating plots", "src/train.py"),
+]
+SEPARATOR_NAMES = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}
+
+st.set_page_config(page_title="AutoML Platform", page_icon="📊", layout="wide")
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def fmt(value, digits: int = 3) -> str:
+    """Format a number for display; anything missing/invalid becomes an em dash."""
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def save_upload(uploaded) -> None:
     RAW_PATH.parent.mkdir(parents=True, exist_ok=True)
     RAW_PATH.write_bytes(uploaded.getvalue())
 
 
-def run_step(label: str, script: str, target: str) -> subprocess.CompletedProcess:
+def run_step(script: str, target: str) -> subprocess.CompletedProcess:
     """Run one pipeline stage; argument list (no shell) so odd column names are safe."""
     return subprocess.run(
         [sys.executable, script, "--target", target],
@@ -41,105 +65,286 @@ def run_step(label: str, script: str, target: str) -> subprocess.CompletedProces
     )
 
 
-def latest_run_dir(preferred: str | None = None) -> Path | None:
-    if preferred and (OUTPUT_DIR / preferred).is_dir():
-        return OUTPUT_DIR / preferred
-    runs = sorted(p for p in OUTPUT_DIR.glob("run_*") if p.is_dir())  # names sort chronologically
-    return runs[-1] if runs else None
+def last_error_line(result: subprocess.CompletedProcess) -> str:
+    """Pull the most useful one-line error message out of a failed step's output."""
+    lines = (result.stdout + "\n" + result.stderr).strip().splitlines()
+    errors = [ln for ln in lines if "ERROR" in ln or "Error" in ln]
+    line = (errors or lines or ["unknown error"])[-1]
+    return line.split("| ")[-1].strip()
 
 
-def show_results() -> None:
-    """Render the LAST row of experiments_log.csv and the matching SHAP plot."""
+def show_image(path: Path | None, missing_label: str) -> None:
+    """Display a plot, or a friendly placeholder if it was not generated."""
+    if path is not None and path.exists():
+        st.image(str(path), width="stretch")
+    else:
+        st.warning(f"{missing_label} is not available for this run.", icon="⚠️")
+
+
+def load_latest_run() -> tuple[pd.Series, pd.DataFrame, Path | None, dict] | None:
+    """Return (last log row, full log, run folder, run_metrics.json) or None."""
     if not LOG_PATH.exists():
-        return
-    log = pd.read_csv(LOG_PATH)
+        return None
+    try:
+        log = pd.read_csv(LOG_PATH)
+    except Exception as exc:  # corrupted / partially written log
+        st.error(f"Could not read `outputs/experiments_log.csv`: {exc}")
+        return None
     if log.empty:
-        return
+        return None
+
     last = log.iloc[-1]
+    run_dir = OUTPUT_DIR / str(last["Timestamp"])
+    if not run_dir.is_dir():  # fall back to the newest timestamped folder
+        runs = sorted(p for p in OUTPUT_DIR.glob("run_*") if p.is_dir())
+        run_dir = runs[-1] if runs else None
 
-    st.subheader("Latest run results")
-    st.caption(f"Run `{last['Timestamp']}` · target column: **{last['Target_Column']}**")
+    details: dict = {}
+    if run_dir is not None and (run_dir / "run_metrics.json").exists():
+        try:
+            details = json.loads((run_dir / "run_metrics.json").read_text())
+        except (json.JSONDecodeError, OSError):
+            details = {}
+    return last, log, run_dir, details
 
-    cols = st.columns(5)
-    cols[0].metric("F1 score", f"{last['F1_Score']:.3f}")
-    cols[1].metric("Precision", f"{last['Precision']:.3f}")
-    cols[2].metric("Recall", f"{last['Recall']:.3f}")
-    cols[3].metric("PR-AUC", f"{last['PR_AUC']:.3f}")
-    cols[4].metric("Best threshold", f"{last['Best_Threshold']:.2f}")
+
+# --------------------------------------------------------------------------- #
+# Sidebar
+# --------------------------------------------------------------------------- #
+def render_sidebar() -> tuple[str | None, bool, pd.DataFrame | None]:
+    """Upload + target selection + run button. Returns (target, clicked, preview)."""
+    with st.sidebar:
+        st.title("📊 AutoML Platform")
+        st.caption(
+            "Upload any binary-classification dataset, choose what to predict, and get an "
+            "imbalance-aware, explainable XGBoost model in one click."
+        )
+        st.divider()
+
+        uploaded = st.file_uploader("**1 · Upload dataset**", type=["csv", "tsv", "txt"],
+                                    help="Separator (, ; tab |) and encoding are detected automatically.")
+        if uploaded is None:
+            st.caption("Waiting for a dataset…")
+            return None, False, None
+
+        save_upload(uploaded)
+        try:
+            preview = read_dataset(RAW_PATH, nrows=PREVIEW_ROWS)
+            if preview.shape[1] < 2:
+                raise ValueError("only 1 column detected - is this a valid delimited file?")
+        except Exception as exc:  # malformed / empty file
+            st.error(f"Could not read the file: {exc}")
+            return None, False, None
+
+        sep = SEPARATOR_NAMES.get(preview.attrs.get("separator"), "unknown")
+        st.success(f"**{uploaded.name}**  \n{preview.shape[1]} columns · {sep}-separated")
+
+        columns = list(preview.columns)
+        target = st.selectbox("**2 · Select the Target Column to Predict**", columns,
+                              index=len(columns) - 1)
+
+        # Early, non-blocking hint: the pipeline itself performs the real validation.
+        n_classes = preview[target].replace(r"^\s*$", pd.NA, regex=True).nunique(dropna=True)
+        if n_classes != 2:
+            st.warning(f"`{target}` has {n_classes} distinct values in the first {PREVIEW_ROWS} "
+                       "rows. Binary classification needs exactly 2.", icon="⚠️")
+
+        clicked = st.button("🚀 Run Pipeline", type="primary", width="stretch")
+        st.divider()
+        st.caption("Pipeline: `preprocess.py` → `train.py` → DIY experiment logger")
+        return target, clicked, preview
+
+
+# --------------------------------------------------------------------------- #
+# Main-area sections
+# --------------------------------------------------------------------------- #
+def render_welcome() -> None:
+    st.info("👈 **Get started:** upload a CSV file in the sidebar.", icon="ℹ️")
+    st.markdown("#### How it works")
+    cols = st.columns(3)
+    steps = [
+        ("📤 1. Upload", "Any binary-classification CSV. Separator and encoding are detected "
+                         "automatically."),
+        ("🎯 2. Pick a target", "Choose the column to predict. It must contain exactly two classes "
+                               "(e.g. Yes/No, 1/0, M/B)."),
+        ("🚀 3. Run", "The pipeline cleans the data, trains XGBoost, tunes the decision threshold "
+                     "for maximum F1 and explains the model with SHAP."),
+    ]
+    for col, (title, body) in zip(cols, steps):
+        with col.container(border=True):
+            st.markdown(f"**{title}**")
+            st.caption(body)
+
+    with st.expander("What happens under the hood?"):
+        st.markdown(
+            "- **Automatic cleaning:** ID-like, constant and high-cardinality columns are dropped; "
+            "blank `\" \"` cells become missing values; features that leak the target are removed.\n"
+            "- **Imputation & encoding:** median for numbers, mode for categories, one-hot encoding.\n"
+            "- **Imbalance handling:** `scale_pos_weight` is computed from the class ratio.\n"
+            "- **Threshold tuning:** thresholds 0.10–0.90 are scanned; the F1-optimal one is used.\n"
+            "- **DIY experiment tracking:** every run gets its own `outputs/run_<timestamp>/` folder "
+            "and a row in `outputs/experiments_log.csv`. No MLflow needed."
+        )
+
+
+def run_pipeline(target: str) -> bool:
+    """Execute every stage with live progress feedback. Returns True on success."""
+    progress = st.progress(0.0, text="Running MLOps Pipeline...")
+    logs: list[tuple[str, str]] = []
+    ok = True
+
+    with st.status("Running MLOps Pipeline...", expanded=True) as status:
+        for i, (label, script) in enumerate(STEPS, start=1):
+            st.write(f"**Step {i}/{len(STEPS)}:** {label}…")
+            progress.progress((i - 1) / len(STEPS), text=f"Step {i}/{len(STEPS)}: {label}…")
+            try:
+                result = run_step(script, target)
+            except subprocess.TimeoutExpired:
+                st.error(f"Step {i} timed out after {PIPELINE_TIMEOUT_S // 60} minutes.")
+                ok = False
+                break
+            logs.append((label, (result.stdout + result.stderr).strip() or "(no output)"))
+            if result.returncode != 0:
+                st.error(f"**Step {i} failed:** {last_error_line(result)}")
+                ok = False
+                break
+
+        if ok:
+            progress.progress(1.0, text="Pipeline completed")
+            status.update(label="Pipeline completed successfully", state="complete", expanded=False)
+        else:
+            progress.empty()
+            status.update(label="Pipeline failed (see details below)", state="error", expanded=True)
+
+    # Expanders cannot be nested inside st.status, so the full logs go below it.
+    with st.expander("Pipeline logs", expanded=not ok):
+        for label, text in logs:
+            st.markdown(f"**{label}**")
+            st.code(text, language="text")
+    if ok:
+        st.toast("Model trained successfully!", icon="✅")
+    return ok
+
+
+def render_dataset_preview(preview: pd.DataFrame, target: str | None) -> None:
+    with st.expander(f"🔎 Dataset preview (first {min(len(preview), 10)} rows)", expanded=False):
+        st.dataframe(preview.head(10), width="stretch", hide_index=True)
+        if target:
+            st.caption(f"Selected target: **{target}**")
+
+
+def render_dashboard() -> None:
+    latest = load_latest_run()
+    if latest is None:
+        return
+    last, log, run_dir, details = latest
+    m = details.get("metrics", {})
+
+    st.markdown("### 📈 Results dashboard")
+    meta_bits = [f"Run `{last['Timestamp']}`", f"target **{last['Target_Column']}**"]
+    if "positive_class" in details:
+        meta_bits.append(f"positive class (1): **{details['positive_class']}**")
+    if "n_test" in details:
+        meta_bits.append(f"evaluated on **{details['n_test']:,}** hold-out rows")
+    st.caption(" · ".join(meta_bits))
+
+    # ---- KPI row ----
+    kpis = [
+        ("Accuracy", fmt(m.get("accuracy")), "Share of hold-out rows classified correctly."),
+        ("F1-Score", fmt(last["F1_Score"]), "Harmonic mean of precision and recall (optimised)."),
+        ("Precision", fmt(last["Precision"]), "Of the rows predicted positive, how many were."),
+        ("Recall", fmt(last["Recall"]), "Of the truly positive rows, how many were found."),
+        ("PR-AUC", fmt(last["PR_AUC"]), "Area under the precision-recall curve (threshold-free)."),
+        ("Best Threshold", fmt(last["Best_Threshold"], 2), "Probability cut-off that maximises F1."),
+    ]
+    for col, (label, value, help_text) in zip(st.columns(len(kpis)), kpis):
+        col.metric(label, value, help=help_text, border=True)
+
     st.caption(
-        f"max_depth={last['Max_Depth']} · learning_rate={last['Learning_Rate']} · "
-        f"n_estimators={last['N_Estimators']} · scale_pos_weight={last['Scale_Pos_Weight']:.3f}"
+        f"Hyperparameters: max_depth={last['Max_Depth']} · learning_rate={last['Learning_Rate']} · "
+        f"n_estimators={last['N_Estimators']} · scale_pos_weight={fmt(last['Scale_Pos_Weight'])}"
     )
 
-    run_dir = latest_run_dir(str(last["Timestamp"]))
-    if run_dir:
-        shap_png = run_dir / "shap_summary.png"
-        if shap_png.exists():
-            st.subheader("SHAP feature importance")
-            st.image(str(shap_png), width="stretch")
-        model_file = run_dir / "xgboost_model.json"
-        if model_file.exists():
-            st.download_button("Download trained model (xgboost_model.json)",
-                               data=model_file.read_bytes(), file_name="xgboost_model.json",
-                               mime="application/json")
+    # ---- Plots ----
+    def plot(name: str) -> Path | None:
+        return run_dir / name if run_dir is not None else None
 
-    with st.expander("Experiment history (outputs/experiments_log.csv)"):
+    tab_cm, tab_pr, tab_shap, tab_hist = st.tabs([
+        "📊 Confusion Matrix & ROC", "🎯 Precision-Recall Analysis",
+        "🧠 Explainable AI (SHAP)", "🗂️ Experiment History",
+    ])
+    with tab_cm:
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Confusion matrix**")
+            show_image(plot("confusion_matrix.png"), "The confusion matrix")
+            st.caption("Counts of correct and incorrect predictions at the optimal threshold.")
+        with right:
+            st.markdown("**ROC curve**")
+            show_image(plot("roc_curve.png"), "The ROC curve")
+            st.caption("True-positive vs. false-positive rate across all thresholds; "
+                       "the red dot is the chosen operating point.")
+    with tab_pr:
+        left, right = st.columns([3, 2])
+        with left:
+            show_image(plot("pr_curve.png"), "The precision-recall curve")
+        with right:
+            st.markdown("**Reading this chart**")
+            st.caption(
+                "For imbalanced problems the precision-recall curve is more informative than ROC. "
+                "Moving the threshold trades precision (fewer false alarms) for recall (fewer "
+                "missed positives). The red dot marks the F1-optimal threshold "
+                f"(**{fmt(last['Best_Threshold'], 2)}**), and the dashed line is the score of a "
+                "random classifier."
+            )
+            st.metric("PR-AUC", fmt(last["PR_AUC"]), border=True)
+    with tab_shap:
+        show_image(plot("shap_summary.png"), "The SHAP summary plot")
+        st.caption(
+            "**SHAP (SHapley Additive exPlanations)** attributes each prediction to the input "
+            "features. Features are ranked by overall impact; each dot is one row. Its horizontal "
+            "position shows whether that feature pushed the prediction towards the positive class "
+            "(right) or away from it (left), and its colour shows the feature value (red = high, "
+            "blue = low)."
+        )
+    with tab_hist:
         st.dataframe(log.iloc[::-1], width="stretch", hide_index=True)
+        st.caption(f"{len(log)} run(s) recorded in `outputs/experiments_log.csv`.")
+
+    # ---- Downloads ----
+    st.markdown("### ⬇️ Downloads")
+    files = [
+        ("Trained model", "xgboost_model.json", "application/json", plot("xgboost_model.json")),
+        ("Run metrics", "run_metrics.json", "application/json", plot("run_metrics.json")),
+        ("Experiment log", "experiments_log.csv", "text/csv", LOG_PATH),
+    ]
+    for col, (label, filename, mime, path) in zip(st.columns(len(files)), files):
+        available = path is not None and path.exists()
+        col.download_button(
+            f"Download {label.lower()}", data=path.read_bytes() if available else b"",
+            file_name=filename, mime=mime, disabled=not available, width="stretch",
+            help=f"`{filename}`" if available else "Not available for this run",
+        )
 
 
 # --------------------------------------------------------------------------- #
-# UI
+# Page
 # --------------------------------------------------------------------------- #
-st.set_page_config(page_title="Mini-AutoML: XGBoost Pipeline", page_icon="🤖", layout="wide")
+target, run_clicked, preview = render_sidebar()
+
 st.title("Mini-AutoML: XGBoost Pipeline")
-st.write("Upload any binary-classification CSV, choose the column to predict, and train an "
-         "imbalance-aware XGBoost model with an F1-optimised threshold and SHAP explanations.")
+st.caption("Universal binary classification · F1-optimised threshold · explainable AI · "
+           "DIY experiment tracking")
 
-uploaded = st.file_uploader("Upload a CSV dataset", type=["csv"])
-
-target = None
-if uploaded is not None:
-    save_upload(uploaded)
-    try:
-        preview = read_dataset(RAW_PATH, nrows=5)  # auto-detects separator/encoding
-        if preview.shape[1] < 2:
-            raise ValueError("only 1 column detected - is this a valid delimited file?")
-    except Exception as exc:  # malformed / empty file
-        st.error(f"Could not read the CSV: {exc}")
-        st.stop()
-    columns = [str(c).strip() for c in preview.columns]
-    sep_name = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}[preview.attrs["separator"]]
-    st.success(f"Saved to `data/raw/dataset.csv` · {len(columns)} columns · "
-               f"detected separator: {sep_name}")
-    st.dataframe(preview, width="stretch", hide_index=True)
-
-    target = st.selectbox("Select the Target Column to Predict", columns, index=len(columns) - 1)
-
-    if st.button("Run Pipeline", type="primary"):
-        steps = [("1/2 Preprocessing", "src/preprocess.py"), ("2/2 Training", "src/train.py")]
-        failed = False
-        for label, script in steps:
-            with st.spinner(f"{label}..."):
-                try:
-                    result = run_step(label, script, target)
-                except subprocess.TimeoutExpired:
-                    st.error(f"{label} timed out after {PIPELINE_TIMEOUT_S}s")
-                    failed = True
-                    break
-            with st.expander(f"{label} logs", expanded=result.returncode != 0):
-                st.code((result.stdout + result.stderr).strip() or "(no output)", language="text")
-            if result.returncode != 0:
-                st.error(f"{label} failed (exit code {result.returncode}). See logs above.")
-                failed = True
-                break
-        if not failed:
-            st.success("Pipeline finished successfully.")
-            if META_PATH.exists():
-                meta = json.loads(META_PATH.read_text())
-                st.info(f"Target encoding: **{meta['positive_class']}** = 1 (positive), "
-                        f"**{meta['negative_class']}** = 0 · {meta['n_features']} features used · "
-                        f"{len(meta['dropped_columns'])} column(s) auto-dropped")
+if preview is None:
+    render_welcome()
 else:
-    st.info("Upload a CSV to get started.")
+    render_dataset_preview(preview, target)
+    if run_clicked and target:
+        run_pipeline(target)
+    elif not LOG_PATH.exists():
+        st.info("👈 Select the target column and click **Run Pipeline** to train a model.", icon="ℹ️")
 
-show_results()
+if LOG_PATH.exists():
+    st.divider()
+    render_dashboard()

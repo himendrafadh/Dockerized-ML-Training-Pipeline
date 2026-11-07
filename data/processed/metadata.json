@@ -1,14 +1,17 @@
 {
-  "target": "Survived",
-  "positive_class": "1",
-  "negative_class": "0",
+  "target": "Churn Label",
+  "positive_class": "Yes",
+  "negative_class": "No",
   "reason": "recognised yes/true/1-style label",
-  "n_rows": 891,
-  "n_features": 8,
+  "n_rows": 7043,
+  "n_features": 33,
   "dropped_columns": {
-    "PassengerId": "ID-like (every value is unique)",
-    "Name": "ID-like (every value is unique)",
-    "Ticket": "high-cardinality text (681 categories > 50)",
-    "Cabin": "high-cardinality text (147 categories > 50)"
+    "CustomerID": "ID-like (every value is unique)",
+    "Count": "constant column",
+    "Country": "constant column",
+    "State": "constant column",
+    "City": "high-cardinality text (1129 categories > 50)",
+    "Lat Long": "high-cardinality text (1652 categories > 50)",
+    "Churn Value": "target leakage (|corr with target| = 1.000)"
   }
 }

@@ -25,8 +25,12 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    PrecisionRecallDisplay,
+    RocCurveDisplay,
     accuracy_score,
     average_precision_score,
+    confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
@@ -103,6 +107,78 @@ def evaluate(y_true: pd.Series, proba: np.ndarray, threshold: float) -> dict[str
     for k, v in metrics.items():
         logger.info("  %-10s = %.4f", k, v)
     return metrics
+
+
+# --------------------------------------------------------------------------- #
+# Evaluation plots
+# --------------------------------------------------------------------------- #
+def load_class_labels(train_path: Path) -> dict[str, str]:
+    """Read the original class names written by preprocess.py (falls back to 0/1)."""
+    meta_path = train_path.parent / "metadata.json"
+    labels = {"negative_class": "0", "positive_class": "1"}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+            labels = {k: str(meta.get(k, v)) for k, v in labels.items()}
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read %s: %s", meta_path, exc)
+    return labels
+
+
+def save_confusion_matrix(y_true, proba, threshold: float, labels: dict, out_path: Path) -> None:
+    preds = (proba >= threshold).astype(int)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ConfusionMatrixDisplay.from_predictions(
+        y_true, preds, labels=[0, 1],
+        display_labels=[f"{labels['negative_class']} (0)", f"{labels['positive_class']} (1)"],
+        cmap="Blues", values_format="d", colorbar=False, ax=ax,
+    )
+    ax.set_title(f"Confusion Matrix (threshold = {threshold:.2f})")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def save_pr_curve(y_true, proba, threshold: float, metrics: dict, out_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(6, 5))
+    PrecisionRecallDisplay.from_predictions(y_true, proba, name="XGBoost", plot_chance_level=True, ax=ax)
+    # Mark where the chosen (F1-optimal) threshold sits on the curve.
+    ax.scatter(metrics["recall"], metrics["precision"], s=80, color="crimson", zorder=5,
+               label=f"Operating point (t = {threshold:.2f})")
+    ax.set_title("Precision-Recall Curve")
+    ax.legend(loc="lower left")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def save_roc_curve(y_true, proba, threshold: float, out_path: Path) -> None:
+    preds = (proba >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0, 1]).ravel()
+    fpr = fp / (fp + tn) if (fp + tn) else 0.0
+    tpr = tp / (tp + fn) if (tp + fn) else 0.0
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    RocCurveDisplay.from_predictions(y_true, proba, name="XGBoost", plot_chance_level=True, ax=ax)
+    ax.scatter(fpr, tpr, s=80, color="crimson", zorder=5, label=f"Operating point (t = {threshold:.2f})")
+    ax.set_title("ROC Curve")
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def safe_plot(name: str, fn, *args) -> bool:
+    """Run one plotting function; a failed plot is logged but never fails the run."""
+    try:
+        fn(*args)
+        logger.info("Saved %s", name)
+        return True
+    except Exception as exc:  # noqa: BLE001 - plots are non-critical artefacts
+        logger.warning("Could not create %s: %s", name, exc)
+        return False
+    finally:
+        plt.close("all")  # never leak figures, even after an error
 
 
 # --------------------------------------------------------------------------- #
@@ -202,11 +278,26 @@ def main() -> None:
 
     model.save_model(run_dir / "xgboost_model.json")
     logger.info("Saved model -> %s", run_dir / "xgboost_model.json")
-    save_shap_summary(model, X_test, run_dir / "shap_summary.png", args.shap_samples, args.random_state)
+
+    # Evaluation + explainability plots (each one is optional / non-fatal).
+    labels = load_class_labels(args.train_path)
+    plots = {
+        "confusion_matrix.png": (save_confusion_matrix, y_test, proba, best_t, labels),
+        "pr_curve.png": (save_pr_curve, y_test, proba, best_t, metrics),
+        "roc_curve.png": (save_roc_curve, y_test, proba, best_t),
+        "shap_summary.png": (save_shap_summary, model, X_test),
+    }
+    saved_plots = []
+    for name, (fn, *fn_args) in plots.items():
+        out = run_dir / name
+        extra = (args.shap_samples, args.random_state) if fn is save_shap_summary else ()
+        if safe_plot(name, fn, *fn_args, out, *extra):
+            saved_plots.append(name)
 
     (run_dir / "run_metrics.json").write_text(json.dumps({
-        "run_id": run_id, "target": args.target, "best_threshold": best_t,
-        "metrics": metrics, "threshold_curve": curve.to_dict(orient="records"),
+        "run_id": run_id, "target": args.target, **labels, "best_threshold": best_t,
+        "metrics": metrics, "plots": saved_plots, "n_train": len(X_train), "n_test": len(X_test),
+        "n_features": X_train.shape[1], "threshold_curve": curve.to_dict(orient="records"),
     }, indent=2))
 
     append_to_experiment_log(args.output_dir / "experiments_log.csv", {

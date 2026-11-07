@@ -5,3 +5,5 @@ data/processed/*.parquet
 mlruns/
 mlartifacts/
 outputs/
+.claude
+CLAUDE.md
