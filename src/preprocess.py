@@ -1,19 +1,26 @@
-"""Stage 1: Schema validation & preprocessing for the Telco Customer Churn dataset.
+"""Stage 1: Universal validation & preprocessing for any binary-classification CSV.
 
-Steps:
-    1. Load raw CSV and normalize the schema (supports both the Kaggle and the
-       IBM "extended" variants of the dataset).
-    2. Fix the TotalCharges "space trap" (" " -> NaN -> numeric -> 0).
-    3. Drop identifiers, encode the target (Yes/No -> 1/0).
-    4. Impute remaining missing values (numeric: median, categorical: mode).
-    5. One-hot encode categoricals (drop_first=True).
-    6. Stratified 80/20 split and export to Parquet.
+Pipeline (all steps are dataset-agnostic):
+    1. Load the CSV and normalise text cells (strip whitespace, blank -> NaN).
+       This neutralises the classic " " trap in every string column.
+    2. Drop rows with a missing target, then encode the target to 1/0.
+    3. Drop useless features: ID-like columns (all values unique), constant
+       columns, all-NaN columns, ultra-high-cardinality text columns and
+       features that are (near-)perfect copies of the target (leakage).
+    4. Cast string columns that are really numeric (e.g. "29.85", " ") to float.
+    5. Impute: median for numerics, mode for categoricals.
+    6. One-hot encode categoricals (drop_first=True).
+    7. Stratified 80/20 split -> Parquet (+ a small metadata.json for the UI).
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import io
+import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -23,45 +30,14 @@ from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger("preprocess")
 
-TARGET = "Churn"
-ID_COL = "customerID"
-
-# Canonical (Kaggle) schema the rest of the pipeline relies on.
-CANONICAL_COLUMNS = [
-    "customerID", "gender", "SeniorCitizen", "Partner", "Dependents", "tenure",
-    "PhoneService", "MultipleLines", "InternetService", "OnlineSecurity",
-    "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV",
-    "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod",
-    "MonthlyCharges", "TotalCharges", "Churn",
-]
-
-# IBM extended dataset -> canonical names. Columns not in the canonical schema
-# (geo data, Count, and the leakage columns Churn Value / Churn Score /
-# Churn Reason / CLTV) are dropped during normalization.
-IBM_RENAME_MAP = {
-    "CustomerID": "customerID",
-    "Gender": "gender",
-    "Senior Citizen": "SeniorCitizen",
-    "Tenure Months": "tenure",
-    "Phone Service": "PhoneService",
-    "Multiple Lines": "MultipleLines",
-    "Internet Service": "InternetService",
-    "Online Security": "OnlineSecurity",
-    "Online Backup": "OnlineBackup",
-    "Device Protection": "DeviceProtection",
-    "Tech Support": "TechSupport",
-    "Streaming TV": "StreamingTV",
-    "Streaming Movies": "StreamingMovies",
-    "Paperless Billing": "PaperlessBilling",
-    "Payment Method": "PaymentMethod",
-    "Monthly Charges": "MonthlyCharges",
-    "Total Charges": "TotalCharges",
-    "Churn Label": "Churn",
-}
+# Tokens recognised as the "positive" / "negative" class of a binary target.
+POSITIVE_TOKENS = {"yes", "y", "true", "t", "1", "positive", "pos"}
+NEGATIVE_TOKENS = {"no", "n", "false", "f", "0", "negative", "neg"}
+STRING_DTYPES = ["object", "category", "string"]
 
 
-class SchemaValidationError(ValueError):
-    """Raised when the raw data does not satisfy the expected schema."""
+class DataValidationError(ValueError):
+    """Raised when the uploaded dataset cannot be used for binary classification."""
 
 
 def setup_logging(level: str) -> None:
@@ -72,136 +48,265 @@ def setup_logging(level: str) -> None:
     )
 
 
-def load_raw(path: Path) -> pd.DataFrame:
+# --------------------------------------------------------------------------- #
+# Loading & text cleaning
+# --------------------------------------------------------------------------- #
+CANDIDATE_SEPARATORS = [",", ";", "\t", "|"]
+ENCODINGS = ["utf-8-sig", "latin-1"]  # utf-8 (with/without BOM) first; latin-1 never fails
+
+
+def detect_separator(sample: str) -> str:
+    """Pick the delimiter that splits the first lines into the same (>1) number of fields.
+
+    Uses the csv module per candidate so delimiters inside quoted cells
+    (e.g. "Bandung, Jawa") are not miscounted. Falls back to a comma.
+    """
+    best_sep, best_fields = ",", 1
+    for sep in CANDIDATE_SEPARATORS:
+        try:
+            counts = [len(r) for r in csv.reader(io.StringIO(sample), delimiter=sep) if r]
+        except csv.Error:
+            continue
+        if len(counts) < 2:
+            continue
+        mode = max(set(counts), key=counts.count)
+        consistent = counts.count(mode) / len(counts) >= 0.9
+        if consistent and mode > best_fields:
+            best_sep, best_fields = sep, mode
+    return best_sep
+
+
+def read_dataset(path: Path, nrows: int | None = None) -> pd.DataFrame:
+    """Read a delimited text file, auto-detecting the separator and encoding."""
     if not path.exists():
-        raise FileNotFoundError(f"Raw dataset not found at {path}")
-    # keep_default_na=False so a literal " " survives the read untouched and is
-    # handled explicitly by the space-trap logic below.
-    df = pd.read_csv(path, keep_default_na=False, na_values=[""])
-    logger.info("Loaded raw data from %s: %d rows x %d cols", path, *df.shape)
+        raise FileNotFoundError(f"Dataset not found at {path}")
+    for encoding in ENCODINGS:
+        try:
+            with open(path, encoding=encoding, newline="") as f:
+                sample = "".join(f.readline() for _ in range(50))
+            sep = detect_separator(sample)
+            # keep_default_na=False keeps literal " " cells intact so we can detect them
+            # explicitly; only truly empty cells become NaN at read time.
+            df = pd.read_csv(path, sep=sep, encoding=encoding, nrows=nrows,
+                             keep_default_na=False, na_values=[""], low_memory=False)
+            break
+        except UnicodeDecodeError:
+            continue
+    df.columns = [str(c).strip() for c in df.columns]
+    df.attrs["separator"], df.attrs["encoding"] = sep, encoding
     return df
 
 
-def normalize_schema(df: pd.DataFrame) -> pd.DataFrame:
-    """Map known dataset variants onto the canonical schema and validate it."""
-    if "Churn Label" in df.columns or "Total Charges" in df.columns:
-        logger.info("Detected IBM extended schema -> renaming to canonical schema")
-        df = df.rename(columns=IBM_RENAME_MAP)
-        dropped = [c for c in df.columns if c not in CANONICAL_COLUMNS]
-        logger.info("Dropping %d non-canonical / leakage columns: %s", len(dropped), dropped)
-        df = df[[c for c in CANONICAL_COLUMNS if c in df.columns]]
-
-    missing = [c for c in CANONICAL_COLUMNS if c not in df.columns]
-    if missing:
-        raise SchemaValidationError(f"Missing required columns: {missing}")
-
-    df = df[CANONICAL_COLUMNS].copy()
-
-    # SeniorCitizen is 0/1 in the Kaggle version but Yes/No in the IBM version.
-    if df["SeniorCitizen"].dtype == object:
-        df["SeniorCitizen"] = df["SeniorCitizen"].map({"Yes": 1, "No": 0})
-
-    labels = set(df[TARGET].dropna().astype(str).str.strip().unique())
-    if not labels <= {"Yes", "No"}:
-        raise SchemaValidationError(f"Unexpected target values in '{TARGET}': {labels}")
-
-    if df[ID_COL].duplicated().any():
-        raise SchemaValidationError(f"Duplicate values found in '{ID_COL}'")
-
-    logger.info("Schema validation passed (%d columns)", df.shape[1])
-    return df
-
-
-def fix_total_charges(df: pd.DataFrame) -> pd.DataFrame:
-    """Handle the TotalCharges 'space trap' for brand-new customers."""
-    col = df["TotalCharges"].astype(str)
-    blank_mask = col.str.strip().eq("") | col.str.lower().eq("nan")
-    n_blank = int(blank_mask.sum())
-    if n_blank:
-        logger.warning(
-            "TotalCharges space trap: %d blank/whitespace value(s) detected "
-            "(tenure of affected rows: %s)",
-            n_blank, sorted(df.loc[blank_mask, "tenure"].unique().tolist()),
+def load_csv(path: Path) -> pd.DataFrame:
+    df = read_dataset(path)
+    if df.empty:
+        raise DataValidationError("The uploaded CSV has no rows")
+    if df.shape[1] < 2:
+        raise DataValidationError(
+            f"Only 1 column was detected (separator {df.attrs['separator']!r}); "
+            "check that the file is a valid delimited text file"
         )
+    logger.info("Loaded %s: %d rows x %d cols (separator=%r, encoding=%s)",
+                path, *df.shape, df.attrs["separator"], df.attrs["encoding"])
+    return df
 
-    numeric = pd.to_numeric(col.where(~blank_mask, np.nan), errors="coerce")
-    unparseable = numeric.isna() & ~blank_mask
-    if unparseable.any():
-        raise SchemaValidationError(
-            f"TotalCharges has {int(unparseable.sum())} non-numeric value(s): "
-            f"{col[unparseable].unique()[:5].tolist()}"
+
+def clean_string_cells(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip whitespace in every string column; blank / whitespace-only -> NaN."""
+    for col in df.select_dtypes(include=STRING_DTYPES).columns:
+        stripped = df[col].astype("string").str.strip()
+        n_blank = int((stripped == "").sum())
+        if n_blank:
+            logger.warning("Space trap: %d blank/whitespace cell(s) in '%s' -> NaN", n_blank, col)
+        df[col] = stripped.replace("", pd.NA).astype(object).where(stripped.notna() & (stripped != ""), np.nan)
+    return df
+
+
+# --------------------------------------------------------------------------- #
+# Target handling
+# --------------------------------------------------------------------------- #
+def _normalise_label(value) -> str:
+    """'Yes ' -> 'yes', 1.0 -> '1', True -> 'true'."""
+    if isinstance(value, (bool, np.bool_)):
+        return str(bool(value)).lower()
+    try:
+        f = float(value)
+        if f.is_integer():
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip().lower()
+
+
+def encode_target(y: pd.Series) -> tuple[pd.Series, dict]:
+    """Map a 2-class column to 1/0. Returns the encoded series and the mapping used."""
+    counts = y.value_counts()
+    if len(counts) != 2:
+        raise DataValidationError(
+            f"Target '{y.name}' must have exactly 2 classes for binary classification; "
+            f"found {len(counts)}: {counts.index.tolist()[:10]}"
         )
+    classes = list(counts.index)
+    norm = {c: _normalise_label(c) for c in classes}
+    pos = [c for c in classes if norm[c] in POSITIVE_TOKENS]
+    neg = [c for c in classes if norm[c] in NEGATIVE_TOKENS]
 
-    df["TotalCharges"] = numeric.fillna(0.0).astype(float)
-    logger.info("TotalCharges coerced to float; %d NaN(s) filled with 0", n_blank)
-    return df
+    if len(pos) == 1 and len(neg) == 1:
+        positive = pos[0]
+        reason = "recognised yes/true/1-style label"
+    else:
+        positive = counts.idxmin()  # minority class is normally the one of interest
+        reason = "minority class (no yes/no-style labels recognised)"
+    negative = next(c for c in classes if c != positive)
 
-
-def encode_target(df: pd.DataFrame) -> pd.DataFrame:
-    df[TARGET] = df[TARGET].astype(str).str.strip().map({"Yes": 1, "No": 0}).astype(int)
-    logger.info("Target encoded. Class distribution: %s", df[TARGET].value_counts().to_dict())
-    return df
-
-
-def impute_missing(df: pd.DataFrame) -> pd.DataFrame:
-    features = [c for c in df.columns if c != TARGET]
-    num_cols = df[features].select_dtypes(include="number").columns
-    cat_cols = df[features].select_dtypes(exclude="number").columns
-
-    for c in num_cols:
-        n = int(df[c].isna().sum())
-        if n:
-            median = df[c].median()
-            df[c] = df[c].fillna(median)
-            logger.info("Filled %d missing in numeric '%s' with median=%.4f", n, c, median)
-
-    for c in cat_cols:
-        n = int(df[c].isna().sum())
-        if n:
-            mode = df[c].mode(dropna=True).iloc[0]
-            df[c] = df[c].fillna(mode)
-            logger.info("Filled %d missing in categorical '%s' with mode=%r", n, c, mode)
-
-    logger.info("Imputation complete (%d numeric, %d categorical features)", len(num_cols), len(cat_cols))
-    return df
+    logger.info("Target classes: positive(1)=%r, negative(0)=%r [%s]", positive, negative, reason)
+    encoded = (y == positive).astype(int)
+    mapping = {"positive_class": str(positive), "negative_class": str(negative), "reason": reason}
+    return encoded, mapping
 
 
-def one_hot_encode(df: pd.DataFrame) -> pd.DataFrame:
-    cat_cols = [c for c in df.select_dtypes(exclude="number").columns if c != TARGET]
-    df = pd.get_dummies(df, columns=cat_cols, drop_first=True, dtype=np.uint8)
-    # Sanitize names for XGBoost (no [, ] or < allowed in feature names).
-    df.columns = (
-        df.columns.str.replace(r"[\[\]<]", "_", regex=True)
-        .str.replace(r"[\s()]+", "_", regex=True)
-        .str.strip("_")
-    )
-    logger.info("One-hot encoded %d categorical columns -> %d total columns", len(cat_cols), df.shape[1])
-    return df
+# --------------------------------------------------------------------------- #
+# Feature cleaning
+# --------------------------------------------------------------------------- #
+def _categorical_error_reduction(series: pd.Series, y: pd.Series) -> float:
+    """Share of the majority-class baseline's errors removed by predicting the target
+    from the column's categories alone (1.0 = the column perfectly determines y)."""
+    mask = series.notna()
+    y_m = y[mask]
+    baseline_errors = min(int(y_m.sum()), int((1 - y_m).sum()))
+    if baseline_errors == 0:
+        return 0.0
+    ct = pd.crosstab(series[mask], y_m)
+    category_errors = int((ct.sum(axis=1) - ct.max(axis=1)).sum())
+    return 1.0 - category_errors / baseline_errors
 
 
-def split_and_save(df: pd.DataFrame, out_dir: Path, test_size: float, seed: int) -> None:
-    X = df.drop(columns=[TARGET])
-    y = df[TARGET]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, stratify=y, random_state=seed
-    )
+def drop_useless_features(
+    X: pd.DataFrame, y: pd.Series, max_categories: int, leakage_threshold: float
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Drop ID-like, constant, empty, high-cardinality and target-leaking columns."""
+    n_rows = len(X)
+    dropped: dict[str, str] = {}
 
+    for col in X.columns:
+        series = X[col]
+        n_unique = series.nunique(dropna=True)
+        is_float = pd.api.types.is_float_dtype(series)
+
+        if series.isna().all():
+            dropped[col] = "all values missing"
+        elif n_unique <= 1:
+            dropped[col] = "constant column"
+        elif n_rows > 1 and series.notna().all() and n_unique == n_rows and not is_float:
+            dropped[col] = "ID-like (every value is unique)"
+        elif not pd.api.types.is_numeric_dtype(series) and n_unique > max_categories:
+            # A string column that is mostly numbers (stored as text) is kept; it gets
+            # cast to float later. Otherwise one-hot would explode the feature space.
+            as_num = pd.to_numeric(series.dropna(), errors="coerce")
+            if as_num.notna().all():
+                continue
+            dropped[col] = f"high-cardinality text ({n_unique} categories > {max_categories})"
+
+    # Leakage guard: features that (almost) reproduce the target.
+    for col in X.columns:
+        if col in dropped:
+            continue
+        series = X[col]
+        # (a) numeric features: near-perfect linear correlation with the 1/0 target.
+        numeric = pd.to_numeric(series, errors="coerce")
+        if numeric.notna().sum() >= 2 and numeric.nunique() >= 2:
+            corr = numeric.fillna(numeric.median()).corr(y)
+            if pd.notna(corr) and abs(corr) >= leakage_threshold:
+                dropped[col] = f"target leakage (|corr with target| = {abs(corr):.3f})"
+                continue
+        # (b) text/categorical features: categories that (almost) determine the target,
+        #     e.g. a "Yes/No" copy of the target stored under another name.
+        if not pd.api.types.is_numeric_dtype(series):
+            removed = _categorical_error_reduction(series, y)
+            if removed >= leakage_threshold and n_rows / max(series.nunique(), 1) >= 20:
+                dropped[col] = f"target leakage (categories explain {removed:.1%} of the target)"
+
+    for col, why in dropped.items():
+        logger.warning("Dropping column '%s': %s", col, why)
+    logger.info("Dropped %d column(s); %d feature(s) remain", len(dropped), X.shape[1] - len(dropped))
+    return X.drop(columns=list(dropped)), dropped
+
+
+def cast_numeric_strings(X: pd.DataFrame) -> pd.DataFrame:
+    """Cast string columns whose non-null values are all numeric to float; fix bools."""
+    for col in X.select_dtypes(include=STRING_DTYPES).columns:
+        non_null = X[col].dropna()
+        converted = pd.to_numeric(non_null, errors="coerce")
+        if len(non_null) and converted.notna().all():
+            X[col] = pd.to_numeric(X[col], errors="coerce").astype(float)
+            logger.info("Cast text column '%s' to float", col)
+    for col in X.select_dtypes(include="bool").columns:
+        X[col] = X[col].astype(int)
+    return X
+
+
+def impute_missing(X: pd.DataFrame) -> pd.DataFrame:
+    """Median for numeric columns, mode for categorical columns."""
+    for col in X.columns:
+        n_missing = int(X[col].isna().sum())
+        if not n_missing:
+            continue
+        if pd.api.types.is_numeric_dtype(X[col]):
+            fill = float(X[col].median())
+            kind = "median"
+        else:
+            fill = X[col].mode(dropna=True).iloc[0]
+            kind = "mode"
+        X[col] = X[col].fillna(fill)
+        logger.info("Imputed %d missing in '%s' with %s=%r", n_missing, col, kind, fill)
+    return X
+
+
+def one_hot_encode(X: pd.DataFrame, reserved: set[str]) -> pd.DataFrame:
+    cat_cols = X.select_dtypes(include=STRING_DTYPES).columns.tolist()
+    X = pd.get_dummies(X, columns=cat_cols, drop_first=True, dtype=np.uint8)
+
+    # XGBoost forbids '[', ']' and '<' in feature names; also guarantee uniqueness.
+    seen, new_cols = set(reserved), []
+    for col in X.columns:
+        name = re.sub(r"[\[\]<>]", "_", str(col))
+        name = re.sub(r"\s+", "_", name).strip("_") or "feature"
+        base, i = name, 1
+        while name in seen:
+            i += 1
+            name = f"{base}_{i}"
+        seen.add(name)
+        new_cols.append(name)
+    X.columns = new_cols
+    logger.info("One-hot encoded %d categorical column(s) -> %d feature(s)", len(cat_cols), X.shape[1])
+    return X
+
+
+# --------------------------------------------------------------------------- #
+# Orchestration
+# --------------------------------------------------------------------------- #
+def split_and_save(X, y, target, out_dir: Path, test_size: float, seed: int) -> None:
+    if y.value_counts().min() < 2:
+        raise DataValidationError("Each class needs at least 2 samples for a stratified split")
+    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, stratify=y, random_state=seed)
     out_dir.mkdir(parents=True, exist_ok=True)
-    train = X_train.assign(**{TARGET: y_train})
-    test = X_test.assign(**{TARGET: y_test})
-    train.to_parquet(out_dir / "train.parquet", index=False)
-    test.to_parquet(out_dir / "test.parquet", index=False)
-
-    logger.info("Train: %s, churn rate=%.3f -> %s", train.shape, y_train.mean(), out_dir / "train.parquet")
-    logger.info("Test:  %s, churn rate=%.3f -> %s", test.shape, y_test.mean(), out_dir / "test.parquet")
+    X_tr.assign(**{target: y_tr}).to_parquet(out_dir / "train.parquet", index=False)
+    X_te.assign(**{target: y_te}).to_parquet(out_dir / "test.parquet", index=False)
+    logger.info("Train: %s (positive rate %.3f) -> %s", X_tr.shape, y_tr.mean(), out_dir / "train.parquet")
+    logger.info("Test:  %s (positive rate %.3f) -> %s", X_te.shape, y_te.mean(), out_dir / "test.parquet")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Telco churn: validation & preprocessing stage")
-    p.add_argument("--input", type=Path, default=Path("data/raw/Telco_customer_churn.csv"))
+    p = argparse.ArgumentParser(description="Universal preprocessing for binary classification CSVs")
+    p.add_argument("--target", required=True, help="Name of the target column to predict")
+    p.add_argument("--input", type=Path, default=Path("data/raw/dataset.csv"))
     p.add_argument("--output-dir", type=Path, default=Path("data/processed"))
     p.add_argument("--test-size", type=float, default=0.2)
     p.add_argument("--random-state", type=int, default=42)
+    p.add_argument("--max-categories", type=int, default=50,
+                   help="Drop text columns with more distinct values than this")
+    p.add_argument("--leakage-threshold", type=float, default=0.98,
+                   help="Drop features whose |correlation| with the target is >= this")
     p.add_argument("--log-level", default="INFO")
     return p.parse_args()
 
@@ -209,24 +314,41 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     setup_logging(args.log_level)
-    logger.info("=== Stage 1: Preprocessing started ===")
+    logger.info("=== Stage 1: Preprocessing started (target='%s') ===", args.target)
 
-    df = load_raw(args.input)
-    df = normalize_schema(df)
-    df = fix_total_charges(df)
-    df = df.drop(columns=[ID_COL])
-    logger.info("Dropped identifier column '%s'", ID_COL)
-    df = encode_target(df)
-    df = impute_missing(df)
-    df = one_hot_encode(df)
-    split_and_save(df, args.output_dir, args.test_size, args.random_state)
+    df = load_csv(args.input)
+    if args.target not in df.columns:
+        raise DataValidationError(f"Target column '{args.target}' not found. Columns: {list(df.columns)}")
 
+    df = clean_string_cells(df)
+
+    n_before = len(df)
+    df = df.dropna(subset=[args.target]).reset_index(drop=True)
+    if len(df) < n_before:
+        logger.warning("Dropped %d row(s) with a missing target", n_before - len(df))
+
+    y, mapping = encode_target(df[args.target])
+    X = df.drop(columns=[args.target])
+
+    X, dropped = drop_useless_features(X, y, args.max_categories, args.leakage_threshold)
+    if X.shape[1] == 0:
+        raise DataValidationError("No usable feature columns remain after cleaning")
+    X = cast_numeric_strings(X)
+    X = impute_missing(X)
+    X = one_hot_encode(X, reserved={args.target})
+
+    split_and_save(X, y, args.target, args.output_dir, args.test_size, args.random_state)
+
+    meta = {"target": args.target, **mapping, "n_rows": int(len(df)),
+            "n_features": int(X.shape[1]), "dropped_columns": dropped}
+    (args.output_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
     logger.info("=== Stage 1: Preprocessing finished ===")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
-        logger.exception("Preprocessing failed")
+    except Exception as exc:
+        logger.error("Preprocessing failed: %s", exc)
+        logger.debug("Traceback", exc_info=True)
         sys.exit(1)

@@ -16,6 +16,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY src/ ./src/
 
-RUN mkdir -p /app/data/raw /app/data/processed /app/mlruns /app/mlartifacts
+RUN mkdir -p /app/data/raw /app/data/processed /app/outputs
+
+EXPOSE 8501
 
 CMD ["python"]

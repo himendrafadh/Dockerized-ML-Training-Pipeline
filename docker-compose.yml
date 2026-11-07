@@ -1,42 +1,21 @@
 services:
-  mlflow-server:
+  ml-app:
     build: .
-    image: telco-churn-mlops:latest
-    container_name: mlflow-server
+    image: mini-automl-xgboost:latest
+    container_name: ml-app
     ports:
-      - "5000:5000"
-    volumes:
-      - ./mlruns:/app/mlruns
-      - ./mlartifacts:/app/mlartifacts
-    command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:////app/mlruns/mlflow.db
-      --serve-artifacts
-      --artifacts-destination /app/mlartifacts
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    restart: unless-stopped
-
-  ml-pipeline:
-    image: telco-churn-mlops:latest
-    container_name: ml-pipeline
-    depends_on:
-      mlflow-server:
-        condition: service_healthy
+      - "8501:8501"
     environment:
-      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
     volumes:
-      - ./data:/app/data
-      - ./mlruns:/app/mlruns
-      - ./mlartifacts:/app/mlartifacts
-      - ./src:/app/src
       - ./outputs:/app/outputs
-    command: >
-      sh -c "python src/preprocess.py &&
-             python src/train.py --output-dir outputs"
+      - ./data:/app/data
+    command: streamlit run src/app.py --server.port=8501 --server.address=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped

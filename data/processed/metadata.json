@@ -1,0 +1,14 @@
+{
+  "target": "Survived",
+  "positive_class": "1",
+  "negative_class": "0",
+  "reason": "recognised yes/true/1-style label",
+  "n_rows": 891,
+  "n_features": 8,
+  "dropped_columns": {
+    "PassengerId": "ID-like (every value is unique)",
+    "Name": "ID-like (every value is unique)",
+    "Ticket": "high-cardinality text (681 categories > 50)",
+    "Cabin": "high-cardinality text (147 categories > 50)"
+  }
+}
