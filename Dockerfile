@@ -15,7 +15,6 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY src/ ./src/
-COPY .streamlit/ ./.streamlit/
 
 RUN mkdir -p /app/data/raw /app/data/processed /app/outputs
 

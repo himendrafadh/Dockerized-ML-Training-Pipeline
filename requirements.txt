@@ -11,5 +11,7 @@ xgboost>=2.0.0,<3.1
 shap>=0.45.0
 matplotlib>=3.8.0
 
-# Web UI
-streamlit>=1.50.0,<2.0
+# Web API + static UI (FastAPI serves src/static; uploads need python-multipart)
+fastapi>=0.110.0,<1.0
+uvicorn>=0.29.0,<1.0
+python-multipart>=0.0.9

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini-AutoML</title>
+  <!-- App icon: three rising bars, the same data-bar motif used across the UI. -->
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // Apply the saved/system theme before first paint to avoid a flash.
+    (function () {
+      var theme = "light";
+      try {
+        theme = localStorage.getItem("theme") ||
+          (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      } catch (e) { /* storage blocked: keep light */ }
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+
+  <header class="topbar">
+    <a class="brand" href="#/new">Mini-AutoML</a>
+    <div class="topbar-tools">
+      <div class="lang-switch" role="group" aria-label="Language" data-i18n-aria="lang.label">
+        <button type="button" class="lang-btn" data-lang="en" lang="en" aria-label="English" aria-pressed="true">EN</button>
+        <button type="button" class="lang-btn" data-lang="id" lang="id" aria-label="Bahasa Indonesia" aria-pressed="false">ID</button>
+      </div>
+      <!-- Icon-only toggle: the accessible name stays "Dark theme"; aria-pressed carries the state. -->
+      <button id="theme-toggle" class="icon-btn" type="button" aria-pressed="false"
+              aria-label="Dark theme" data-i18n-aria="theme.label">
+        <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+          <path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidenav" aria-label="Main" data-i18n-aria="nav.label">
+      <a href="#/new" data-nav="new"><span data-i18n="nav.new">New run</span></a>
+      <a href="#/runs" data-nav="runs"><span data-i18n="nav.runs">Runs</span> <span id="runs-count" class="nav-count"></span></a>
+    </nav>
+
+    <main id="main" tabindex="-1">
+      <div id="view">
+        <p class="state" role="status">Loading…</p>
+      </div>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <p><span id="footer-text">XGBoost pipeline with a file-based experiment log in <code>outputs/experiments_log.csv</code>.</span>
+      <a href="/api/docs" data-i18n="footer.api">API reference</a></p>
+    <p class="footer-credit">Himendra Fadhil</p>
+  </footer>
+</body>
+</html>

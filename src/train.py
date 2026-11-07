@@ -18,7 +18,7 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # headless backend (Docker / Streamlit server)
+matplotlib.use("Agg")  # headless backend (Docker / web server subprocess)
 
 import matplotlib.pyplot as plt
 import numpy as np
