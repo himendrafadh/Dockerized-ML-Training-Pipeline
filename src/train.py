@@ -1,8 +1,9 @@
-"""Stage 2: XGBoost training with a custom (file-based) experiment logger.
+"""Stage 2: model training with a custom (file-based) experiment logger.
 
-No external tracking server is used. Every run:
+The model is chosen with --model (see models.py: XGBoost, Random Forest, Logistic Regression,
+HistGradientBoosting, LightGBM, CatBoost). No external tracking server is used. Every run:
     * creates   outputs/run_YYYYMMDD_HHMMSS/
-    * saves     shap_summary.png, xgboost_model.json, run_metrics.json inside it
+    * saves     the model file, evaluation plots, shap_summary.png, run_metrics.json inside it
     * appends a row to the global  outputs/experiments_log.csv
 """
 
@@ -12,7 +13,9 @@ import argparse
 import csv
 import json
 import logging
+import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -35,14 +38,16 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-from xgboost import XGBClassifier
+
+from models import DEFAULT_MODEL, MODELS, ModelSpec, get_model
 
 logger = logging.getLogger("train")
 
 LOG_HEADER = [
-    "Timestamp", "Target_Column", "Max_Depth", "Learning_Rate", "N_Estimators",
+    "Timestamp", "Target_Column", "Model", "Max_Depth", "Learning_Rate", "N_Estimators",
     "Scale_Pos_Weight", "Best_Threshold", "F1_Score", "Precision", "Recall", "PR_AUC",
 ]
+LEGACY_MODEL_NAME = "XGBoost"  # rows written before the Model column existed were XGBoost runs
 
 
 def setup_logging(level: str) -> None:
@@ -139,9 +144,9 @@ def save_confusion_matrix(y_true, proba, threshold: float, labels: dict, out_pat
     plt.close(fig)
 
 
-def save_pr_curve(y_true, proba, threshold: float, metrics: dict, out_path: Path) -> None:
+def save_pr_curve(y_true, proba, threshold: float, metrics: dict, model_label: str, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 5))
-    PrecisionRecallDisplay.from_predictions(y_true, proba, name="XGBoost", plot_chance_level=True, ax=ax)
+    PrecisionRecallDisplay.from_predictions(y_true, proba, name=model_label, plot_chance_level=True, ax=ax)
     # Mark where the chosen (F1-optimal) threshold sits on the curve.
     ax.scatter(metrics["recall"], metrics["precision"], s=80, color="crimson", zorder=5,
                label=f"Operating point (t = {threshold:.2f})")
@@ -152,14 +157,14 @@ def save_pr_curve(y_true, proba, threshold: float, metrics: dict, out_path: Path
     plt.close(fig)
 
 
-def save_roc_curve(y_true, proba, threshold: float, out_path: Path) -> None:
+def save_roc_curve(y_true, proba, threshold: float, model_label: str, out_path: Path) -> None:
     preds = (proba >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0, 1]).ravel()
     fpr = fp / (fp + tn) if (fp + tn) else 0.0
     tpr = tp / (tp + fn) if (tp + fn) else 0.0
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    RocCurveDisplay.from_predictions(y_true, proba, name="XGBoost", plot_chance_level=True, ax=ax)
+    RocCurveDisplay.from_predictions(y_true, proba, name=model_label, plot_chance_level=True, ax=ax)
     ax.scatter(fpr, tpr, s=80, color="crimson", zorder=5, label=f"Operating point (t = {threshold:.2f})")
     ax.set_title("ROC Curve")
     ax.legend(loc="lower right")
@@ -184,12 +189,52 @@ def safe_plot(name: str, fn, *args) -> bool:
 # --------------------------------------------------------------------------- #
 # Explainability
 # --------------------------------------------------------------------------- #
-def save_shap_summary(model: XGBClassifier, X: pd.DataFrame, out_path: Path, max_rows: int, seed: int) -> None:
-    sample = X.sample(n=max_rows, random_state=seed) if len(X) > max_rows else X
-    logger.info("Computing SHAP values on %d test rows", len(sample))
-    shap_values = shap.TreeExplainer(model).shap_values(sample)
+def _positive_class_values(values) -> np.ndarray:
+    """Different SHAP/model versions return a list per class, a 3D array or a 2D array."""
+    if isinstance(values, list):
+        return np.asarray(values[1] if len(values) > 1 else values[0])
+    arr = np.asarray(values)
+    return arr[:, :, 1] if arr.ndim == 3 else arr
+
+
+def compute_shap_values(spec: ModelSpec, model, X_train: pd.DataFrame, sample: pd.DataFrame, seed: int) -> np.ndarray:
+    """SHAP values for the positive class, using the explainer that fits the model type."""
+    background = X_train.sample(n=min(100, len(X_train)), random_state=seed)
+
+    if spec.shap_kind == "tree":
+        return _positive_class_values(shap.TreeExplainer(model).shap_values(sample))
+
+    if spec.shap_kind == "linear":
+        # The linear model sees standardised features, so explain it in that space.
+        scaler, clf = model.named_steps["scale"], model.named_steps["clf"]
+        scaled_bg = pd.DataFrame(scaler.transform(background), columns=sample.columns)
+        scaled_sample = pd.DataFrame(scaler.transform(sample), columns=sample.columns)
+        return _positive_class_values(shap.LinearExplainer(clf, scaled_bg).shap_values(scaled_sample))
+
+    # Model-agnostic fallback (HistGradientBoosting has no tree explainer): a permutation
+    # explainer on the positive-class probability. Slower, so the caller caps the row count.
+    columns = list(sample.columns)
+
+    def predict_positive(data):
+        return model.predict_proba(pd.DataFrame(data, columns=columns))[:, 1]
+
+    masker = shap.maskers.Independent(background.iloc[:50], max_samples=50)
+    explainer = shap.Explainer(predict_positive, masker, algorithm="permutation")
+    return np.asarray(explainer(sample, max_evals=2 * len(columns) + 1).values)
+
+
+def save_shap_summary(
+    spec: ModelSpec, model, X_train: pd.DataFrame, X_test: pd.DataFrame,
+    max_rows: int, seed: int, out_path: Path,
+) -> None:
+    rows = min(max_rows, spec.shap_max_rows) if spec.shap_max_rows else max_rows
+    sample = X_test.sample(n=rows, random_state=seed) if len(X_test) > rows else X_test
+    logger.info("Computing SHAP values (%s explainer) on %d test rows", spec.shap_kind, len(sample))
+    started = time.time()
+    shap_values = compute_shap_values(spec, model, X_train, sample, seed)
+    logger.info("SHAP values computed in %.1f s", time.time() - started)
     plt.figure()
-    shap.summary_plot(shap_values, sample, show=False)
+    shap.summary_plot(shap_values, sample, show=False)  # colours use the original feature values
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close("all")
@@ -208,24 +253,53 @@ def create_run_dir(output_root: Path) -> tuple[str, Path]:
             run_dir.mkdir(parents=True, exist_ok=False)
             return run_id, run_dir
         except FileExistsError:
-            import time
             time.sleep(1)
+
+
+def migrate_log_header(log_path: Path) -> list[str]:
+    """Make sure the log has the current header; returns the header the file now uses.
+
+    Logs written before the Model column existed are rewritten once, with those rows
+    marked as XGBoost runs (the only model that existed then). A file whose header is
+    something else entirely is left untouched and appended to using its own header.
+    """
+    with log_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    legacy = [c for c in LOG_HEADER if c != "Model"]
+    if fieldnames == LOG_HEADER or "Model" in fieldnames or not set(legacy) <= set(fieldnames):
+        return fieldnames
+
+    for row in rows:
+        row["Model"] = LEGACY_MODEL_NAME
+    tmp_path = log_path.with_suffix(".csv.tmp")
+    with tmp_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp_path, log_path)
+    logger.info("Migrated %s to the new header (added Model column to %d old row(s))", log_path, len(rows))
+    return LOG_HEADER
 
 
 def append_to_experiment_log(log_path: Path, row: dict) -> None:
     """Append one row to the global CSV, writing the header on first use."""
-    write_header = not log_path.exists() or log_path.stat().st_size == 0
+    is_new = not log_path.exists() or log_path.stat().st_size == 0
+    fieldnames = LOG_HEADER if is_new else migrate_log_header(log_path)
     with log_path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LOG_HEADER)
-        if write_header:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        if is_new:
             writer.writeheader()
         writer.writerow(row)
     logger.info("Appended run to %s", log_path)
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Universal XGBoost training with a DIY experiment logger")
+    p = argparse.ArgumentParser(description="Universal binary-classification training with a DIY experiment logger")
     p.add_argument("--target", required=True, help="Name of the target column (same as in preprocess)")
+    p.add_argument("--model", choices=list(MODELS), default=DEFAULT_MODEL, help="Which model to train")
     p.add_argument("--train-path", type=Path, default=Path("data/processed/train.parquet"))
     p.add_argument("--test-path", type=Path, default=Path("data/processed/test.parquet"))
     p.add_argument("--output-dir", type=Path, default=Path("outputs"))
@@ -244,7 +318,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     setup_logging(args.log_level)
-    logger.info("=== Stage 2: Training started (target='%s') ===", args.target)
+    spec = get_model(args.model)
+    logger.info("=== Stage 2: Training started (model=%s, target='%s') ===", spec.label, args.target)
 
     X_train, y_train = load_split(args.train_path, args.target)
     X_test, y_test = load_split(args.test_path, args.target)
@@ -252,18 +327,13 @@ def main() -> None:
         raise ValueError("Train/test feature columns do not match")
 
     spw = compute_scale_pos_weight(y_train)
-    model = XGBClassifier(
-        max_depth=args.max_depth,
-        learning_rate=args.learning_rate,
-        n_estimators=args.n_estimators,
-        tree_method="hist",
-        scale_pos_weight=spw,
-        eval_metric="aucpr",
-        random_state=args.random_state,
-        n_jobs=-1,
-    )
-    logger.info("Training XGBClassifier (depth=%d, lr=%g, trees=%d)", args.max_depth, args.learning_rate, args.n_estimators)
+    hyperparams = {"max_depth": args.max_depth, "learning_rate": args.learning_rate, "n_estimators": args.n_estimators}
+    used = {name: value for name, value in {**hyperparams, "scale_pos_weight": spw}.items() if name in spec.uses}
+    model = spec.build(hyperparams, spw, args.random_state)
+    logger.info("Training %s with %s", spec.label, {k: round(v, 4) if isinstance(v, float) else v for k, v in used.items()} or "default settings")
+    started = time.time()
     model.fit(X_train, y_train)
+    logger.info("Training took %.1f s", time.time() - started)
 
     # Probabilities -> F1-optimal threshold -> final metrics.
     proba = model.predict_proba(X_test)[:, 1]
@@ -276,26 +346,25 @@ def main() -> None:
     run_id, run_dir = create_run_dir(args.output_dir)
     logger.info("Run folder: %s", run_dir)
 
-    model.save_model(run_dir / "xgboost_model.json")
-    logger.info("Saved model -> %s", run_dir / "xgboost_model.json")
+    spec.save(model, run_dir / spec.filename)
+    logger.info("Saved model -> %s", run_dir / spec.filename)
 
     # Evaluation + explainability plots (each one is optional / non-fatal).
     labels = load_class_labels(args.train_path)
     plots = {
         "confusion_matrix.png": (save_confusion_matrix, y_test, proba, best_t, labels),
-        "pr_curve.png": (save_pr_curve, y_test, proba, best_t, metrics),
-        "roc_curve.png": (save_roc_curve, y_test, proba, best_t),
-        "shap_summary.png": (save_shap_summary, model, X_test),
+        "pr_curve.png": (save_pr_curve, y_test, proba, best_t, metrics, spec.label),
+        "roc_curve.png": (save_roc_curve, y_test, proba, best_t, spec.label),
+        "shap_summary.png": (save_shap_summary, spec, model, X_train, X_test, args.shap_samples, args.random_state),
     }
     saved_plots = []
     for name, (fn, *fn_args) in plots.items():
-        out = run_dir / name
-        extra = (args.shap_samples, args.random_state) if fn is save_shap_summary else ()
-        if safe_plot(name, fn, *fn_args, out, *extra):
+        if safe_plot(name, fn, *fn_args, run_dir / name):
             saved_plots.append(name)
 
     (run_dir / "run_metrics.json").write_text(json.dumps({
-        "run_id": run_id, "target": args.target, **labels, "best_threshold": best_t,
+        "run_id": run_id, "target": args.target, "model": spec.key, "model_label": spec.label,
+        "model_file": spec.filename, "hyperparameters": used, **labels, "best_threshold": best_t,
         "metrics": metrics, "plots": saved_plots, "n_train": len(X_train), "n_test": len(X_test),
         "n_features": X_train.shape[1], "threshold_curve": curve.to_dict(orient="records"),
     }, indent=2))
@@ -303,10 +372,11 @@ def main() -> None:
     append_to_experiment_log(args.output_dir / "experiments_log.csv", {
         "Timestamp": run_id,
         "Target_Column": args.target,
-        "Max_Depth": args.max_depth,
-        "Learning_Rate": args.learning_rate,
-        "N_Estimators": args.n_estimators,
-        "Scale_Pos_Weight": round(spw, 6),
+        "Model": spec.label,
+        "Max_Depth": used.get("max_depth"),            # blank when the model has no such setting
+        "Learning_Rate": used.get("learning_rate"),
+        "N_Estimators": used.get("n_estimators"),
+        "Scale_Pos_Weight": round(spw, 6) if "scale_pos_weight" in used else None,
         "Best_Threshold": best_t,
         "F1_Score": round(metrics["f1"], 6),
         "Precision": round(metrics["precision"], 6),

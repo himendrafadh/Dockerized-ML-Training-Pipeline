@@ -23,7 +23,7 @@ const I18N = {
     "theme.toDark": "Switch to dark theme",
     "theme.toLight": "Switch to light theme",
     "lang.label": "Language",
-    "footer.text": "XGBoost pipeline with a file-based experiment log in {code}.",
+    "footer.text": "Binary classification with six models and a file-based experiment log in {code}.",
     "footer.api": "API reference",
     "loading": "Loading…",
     "retry": "Try again",
@@ -65,14 +65,13 @@ const I18N = {
     "ds.noBinary": "No column has exactly two values, so this dataset cannot be used for binary classification. Upload a different file.",
     "ds.onlyBinary": "Only show columns with two values",
     "ds.legend": "Target column",
-    "ds.train": "Train XGBoost model",
     "ds.selectHint": "Select a target column to enable training.",
     "ds.target": "Target",
     "ds.starting": "Starting the pipeline…",
     "sep.,": "comma", "sep.;": "semicolon", "sep.\t": "tab", "sep.|": "pipe", "sep.other": "custom",
 
     "step.preprocess": "Validate and preprocess the data",
-    "step.train": "Train XGBoost, tune the threshold, explain the model",
+    "step.train": "Train {model}, tune the threshold, explain the model",
     "step.n": "Step {n}",
     "job.running": "Running · {t}",
     "job.done": "Done · {t}",
@@ -91,7 +90,8 @@ const I18N = {
     "job.showLog": "Show log",
     "job.lost": "Lost track of the training job.",
     "anim.preprocess": "Scanning rows, cleaning columns and encoding features",
-    "anim.train": "Adding boosted trees and scanning thresholds for the best F1",
+    "anim.train": "Training {model} and scanning thresholds for the best F1",
+    "anim.trainOf": "Training {model} ({i} of {n}) and scanning thresholds for the best F1",
     "anim.done": "Done. Opening the results…",
     "anim.pause": "Pause animation",
     "anim.play": "Play animation",
@@ -155,6 +155,51 @@ const I18N = {
     "files.features": "Features after encoding",
     "pos.fallback": "the positive class",
     "pos.short": "positive",
+
+    "ds.modelHeading": "Choose the model",
+    "ds.modelLede": "Every model gets the same split, the same class-imbalance handling and its own F1-tuned threshold, so the scores are comparable.",
+    "ds.trainOne": "Train {model} model",
+    "ds.trainAll": "Train and compare {n} models",
+    "ds.modelLabel": "Model",
+    "ds.allModels": "all {n} models",
+    "model.compare": "Compare all models",
+    "model.compare.desc": "Trains all {n} models one after another on the same split and shows them side by side.",
+    "model.xgboost.desc": "Gradient-boosted trees. A strong default for tabular data.",
+    "model.random_forest.desc": "Many independent decision trees, averaged. Stable and less prone to overfitting.",
+    "model.logistic_regression.desc": "Linear baseline. Shows whether a complex model is needed at all.",
+    "model.hist_gradient_boosting.desc": "scikit-learn's histogram-based gradient boosting. SHAP is estimated by sampling.",
+    "model.lightgbm.desc": "Leaf-wise gradient boosting. Fast on large datasets.",
+    "model.catboost.desc": "Gradient boosting with ordered boosting. Often strong without tuning.",
+    "m.model": "Model",
+    "job.viewFinished.one": "Open the finished run",
+    "job.viewFinished.many": "Compare the {n} finished runs",
+    "runs.select": "Select",
+    "runs.selectRun": "Select {id} for comparison",
+    "runs.compare": "Compare selected ({n})",
+    "runs.compareHint": "Tick two or more runs to compare them side by side.",
+    "run.modelMeta": "model {model}",
+    "cmp.title": "Model comparison",
+    "cmp.loading": "Loading comparison…",
+    "cmp.heading": "Comparing {n} models on {target}",
+    "cmp.headingMixed": "Comparing {n} runs",
+    "cmp.lede": "Sorted by F1 score. Runs trained in the same job share the same 80/20 split, so their scores are directly comparable.",
+    "cmp.mixed": "These runs predict different targets, so their scores are not comparable with each other.",
+    "cmp.missing.one": "1 run could not be loaded and is left out.",
+    "cmp.missing.many": "{n} runs could not be loaded and are left out.",
+    "cmp.notEnough": "Pick at least two runs to compare.",
+    "cmp.bestF1": "best F1",
+    "cmp.bestPr": "best PR-AUC",
+    "cmp.chart": "F1 score by model",
+    "cmp.caption": "Model comparison, sorted by F1 score",
+    "files.modelPrefix": "Trained {model} model.",
+    "files.load.json": "Load it with xgboost.XGBClassifier().load_model().",
+    "files.load.joblib": "Load it with joblib.load(). This format uses pickle: only open files you trust.",
+    "files.load.txt": "Load it with lightgbm.Booster(model_file=...).",
+    "files.load.cbm": "Load it with catboost.CatBoostClassifier().load_model().",
+    "files.classWeight": "class_weight",
+    "files.balanced": "balanced",
+    "shap.note.hist_gradient_boosting": "For HistGradientBoosting, SHAP values are estimated by sampling (up to 300 rows), so they are approximate.",
+    "shap.note.logistic_regression": "For logistic regression, SHAP values are computed on standardised features; the colours still show the original values.",
   },
   id: {
     "doc.title": "Mini-AutoML",
@@ -166,7 +211,7 @@ const I18N = {
     "theme.toDark": "Ganti ke tema gelap",
     "theme.toLight": "Ganti ke tema terang",
     "lang.label": "Bahasa",
-    "footer.text": "Pipeline XGBoost dengan log eksperimen berbasis file di {code}.",
+    "footer.text": "Klasifikasi biner dengan enam model dan log eksperimen berbasis file di {code}.",
     "footer.api": "Referensi API",
     "loading": "Memuat…",
     "retry": "Coba lagi",
@@ -208,14 +253,13 @@ const I18N = {
     "ds.noBinary": "Tidak ada kolom dengan tepat dua nilai, jadi dataset ini tidak bisa dipakai untuk klasifikasi biner. Unggah file lain.",
     "ds.onlyBinary": "Tampilkan hanya kolom dengan dua nilai",
     "ds.legend": "Kolom target",
-    "ds.train": "Latih model XGBoost",
     "ds.selectHint": "Pilih kolom target untuk mulai melatih.",
     "ds.target": "Target",
     "ds.starting": "Menjalankan pipeline…",
     "sep.,": "koma", "sep.;": "titik koma", "sep.\t": "tab", "sep.|": "pipe", "sep.other": "kustom",
 
     "step.preprocess": "Validasi dan praproses data",
-    "step.train": "Latih XGBoost, atur threshold, jelaskan model",
+    "step.train": "Latih {model}, atur threshold, jelaskan model",
     "step.n": "Langkah {n}",
     "job.running": "Berjalan · {t}",
     "job.done": "Selesai · {t}",
@@ -234,7 +278,8 @@ const I18N = {
     "job.showLog": "Lihat log",
     "job.lost": "Status job training tidak bisa diikuti.",
     "anim.preprocess": "Memindai baris, membersihkan kolom dan mengenkode fitur",
-    "anim.train": "Menambah pohon boosting dan mencari threshold dengan F1 terbaik",
+    "anim.train": "Melatih {model} dan mencari threshold dengan F1 terbaik",
+    "anim.trainOf": "Melatih {model} ({i} dari {n}) dan mencari threshold dengan F1 terbaik",
     "anim.done": "Selesai. Membuka hasil…",
     "anim.pause": "Jeda animasi",
     "anim.play": "Putar animasi",
@@ -298,6 +343,51 @@ const I18N = {
     "files.features": "Fitur setelah encoding",
     "pos.fallback": "kelas positif",
     "pos.short": "positif",
+
+    "ds.modelHeading": "Pilih model",
+    "ds.modelLede": "Setiap model memakai split yang sama, penanganan ketidakseimbangan kelas yang sama, dan threshold F1 masing-masing, jadi skornya bisa dibandingkan.",
+    "ds.trainOne": "Latih model {model}",
+    "ds.trainAll": "Latih dan bandingkan {n} model",
+    "ds.modelLabel": "Model",
+    "ds.allModels": "semua {n} model",
+    "model.compare": "Bandingkan semua model",
+    "model.compare.desc": "Melatih {n} model satu per satu pada split yang sama, lalu menampilkannya berdampingan.",
+    "model.xgboost.desc": "Pohon gradient boosting. Pilihan awal yang kuat untuk data tabel.",
+    "model.random_forest.desc": "Banyak pohon keputusan independen yang dirata-rata. Stabil dan tidak mudah overfit.",
+    "model.logistic_regression.desc": "Baseline linear. Menunjukkan apakah model yang rumit memang diperlukan.",
+    "model.hist_gradient_boosting.desc": "Gradient boosting berbasis histogram dari scikit-learn. SHAP diestimasi dengan sampling.",
+    "model.lightgbm.desc": "Gradient boosting leaf-wise. Cepat untuk dataset besar.",
+    "model.catboost.desc": "Gradient boosting dengan ordered boosting. Sering bagus tanpa tuning.",
+    "m.model": "Model",
+    "job.viewFinished.one": "Buka run yang sudah selesai",
+    "job.viewFinished.many": "Bandingkan {n} run yang sudah selesai",
+    "runs.select": "Pilih",
+    "runs.selectRun": "Pilih {id} untuk dibandingkan",
+    "runs.compare": "Bandingkan yang dipilih ({n})",
+    "runs.compareHint": "Centang dua run atau lebih untuk membandingkannya berdampingan.",
+    "run.modelMeta": "model {model}",
+    "cmp.title": "Perbandingan model",
+    "cmp.loading": "Memuat perbandingan…",
+    "cmp.heading": "Membandingkan {n} model untuk {target}",
+    "cmp.headingMixed": "Membandingkan {n} run",
+    "cmp.lede": "Diurutkan berdasarkan skor F1. Run yang dilatih dalam job yang sama memakai split 80/20 yang sama, jadi skornya bisa langsung dibandingkan.",
+    "cmp.mixed": "Run ini memprediksi target yang berbeda, jadi skornya tidak bisa dibandingkan satu sama lain.",
+    "cmp.missing.one": "1 run tidak bisa dimuat dan tidak ditampilkan.",
+    "cmp.missing.many": "{n} run tidak bisa dimuat dan tidak ditampilkan.",
+    "cmp.notEnough": "Pilih minimal dua run untuk dibandingkan.",
+    "cmp.bestF1": "F1 terbaik",
+    "cmp.bestPr": "PR-AUC terbaik",
+    "cmp.chart": "Skor F1 per model",
+    "cmp.caption": "Perbandingan model, diurutkan berdasarkan skor F1",
+    "files.modelPrefix": "Model {model} terlatih.",
+    "files.load.json": "Muat dengan xgboost.XGBClassifier().load_model().",
+    "files.load.joblib": "Muat dengan joblib.load(). Format ini memakai pickle: hanya buka file yang Anda percaya.",
+    "files.load.txt": "Muat dengan lightgbm.Booster(model_file=...).",
+    "files.load.cbm": "Muat dengan catboost.CatBoostClassifier().load_model().",
+    "files.classWeight": "class_weight",
+    "files.balanced": "balanced",
+    "shap.note.hist_gradient_boosting": "Untuk HistGradientBoosting, nilai SHAP diestimasi dengan sampling (maksimal 300 baris), jadi hasilnya perkiraan.",
+    "shap.note.logistic_regression": "Untuk logistic regression, nilai SHAP dihitung pada fitur yang sudah distandarkan; warnanya tetap menunjukkan nilai asli.",
   },
 };
 
@@ -329,6 +419,15 @@ const ANIM_BARS = 28;
 let pollTimer = null;
 let firstRoute = true;
 let animationPaused = false;
+let modelsCache = null;    // [{key, label, default}] from /api/models
+let selectedModel = null;  // a model key, or "compare" for all models
+
+async function loadModels() {
+  if (!modelsCache) modelsCache = await api("/api/models");
+  return modelsCache;
+}
+
+const modelLabel = (key) => ((modelsCache || []).find((m) => m.key === key) || {}).label || key;
 
 /** Fetch JSON from the API; throws Error(message) with .status on failure. */
 async function api(path, options = {}) {
@@ -436,6 +535,7 @@ async function refreshRunsCount() {
 /* ------------------------------------------------------------------ router */
 
 const routes = [
+  [/^#\/compare\/(run_\d{8}_\d{6}(?:,run_\d{8}_\d{6})*)$/, (ids) => renderCompare(ids.split(","))],
   [/^#\/runs\/(run_\d{8}_\d{6})$/, (id) => renderRun(id)],
   [/^#\/runs\/?$/, () => renderRuns()],
   [/^#\/new\/?$/, () => renderNew()],
@@ -445,7 +545,7 @@ function router() {
   stopPolling();
   clearJobView();
   const hash = location.hash || "#/new";
-  const section = hash.startsWith("#/runs") ? "runs" : hash.startsWith("#/new") ? "new" : "";
+  const section = hash.startsWith("#/runs") || hash.startsWith("#/compare") ? "runs" : hash.startsWith("#/new") ? "new" : "";
   document.querySelectorAll("[data-nav]").forEach((link) => {
     if (link.dataset.nav === section) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
@@ -482,6 +582,7 @@ async function renderNew() {
     [dataset, current] = await Promise.all([
       api("/api/dataset").catch((err) => (err.status === 404 ? null : Promise.reject(err))),
       api("/api/jobs/current"),
+      loadModels(),
     ]);
   } catch (err) {
     renderError(t("new.loadError"), err, renderNew);
@@ -601,6 +702,16 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
   const onlyBinary = view.dataset.onlyBinary === "true";
   const sepKey = `sep.${dataset.separator}`;
   const sepName = I18N.en[sepKey] ? t(sepKey) : t("sep.other");
+  const models = modelsCache && modelsCache.length ? modelsCache : [{ key: "xgboost", label: "XGBoost", default: true }];
+  if (!selectedModel || (selectedModel !== "compare" && !models.some((m) => m.key === selectedModel))) {
+    selectedModel = (models.find((m) => m.default) || models[0]).key;
+  }
+  const modelOption = (key, label, desc, cls = "") => `
+    <label class="model-option ${cls}${key === selectedModel ? " is-selected" : ""}" for="model-${key}">
+      <input type="radio" name="model" id="model-${key}" value="${key}" ${key === selectedModel ? "checked" : ""}>
+      <span class="model-name">${esc(label)}</span>
+      <span class="model-desc">${esc(desc)}</span>
+    </label>`;
 
   render(`
     ${notice || ""}
@@ -632,14 +743,28 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
       </fieldset>
     </section>
 
+    <section class="section" aria-labelledby="model-heading">
+      <h2 id="model-heading">${esc(t("ds.modelHeading"))}</h2>
+      <p>${esc(t("ds.modelLede"))}</p>
+      <fieldset style="border:0;padding:0;margin:1rem 0 0">
+        <legend class="visually-hidden">${esc(t("ds.modelHeading"))}</legend>
+        <div class="model-grid">
+          ${models.map((m) => modelOption(m.key, m.label, t(`model.${m.key}.desc`))).join("")}
+          ${models.length > 1 ? modelOption("compare", t("model.compare"), t("model.compare.desc", { n: models.length }), "is-compare") : ""}
+        </div>
+      </fieldset>
+    </section>
+
     <div class="actionbar">
       <p id="target-summary" aria-live="polite"></p>
-      <button class="btn btn-primary" type="button" id="train-btn" disabled>${esc(t("ds.train"))}</button>
+      <button class="btn btn-primary" type="button" id="train-btn" disabled></button>
     </div>`);
 
   const grid = view.querySelector(".col-grid");
+  const modelGrid = view.querySelector(".model-grid");
   const trainBtn = view.querySelector("#train-btn");
   const summary = view.querySelector("#target-summary");
+  const chosenModels = () => (selectedModel === "compare" ? models.map((m) => m.key) : [selectedModel]);
 
   function applyFilter(checked) {
     view.dataset.onlyBinary = String(checked);
@@ -657,6 +782,13 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
       if (on && !note) card.insertAdjacentHTML("beforeend", `<span class="col-note selected-note">${esc(t("col.selected"))}</span>`);
       if (!on && note) note.remove();
     });
+    modelGrid.querySelectorAll(".model-option").forEach((option) => {
+      option.classList.toggle("is-selected", option.querySelector("input").checked);
+    });
+    const compare = selectedModel === "compare";
+    trainBtn.textContent = compare
+      ? t("ds.trainAll", { n: models.length })
+      : t("ds.trainOne", { model: modelLabel(selectedModel) });
     trainBtn.disabled = !checked;
     if (!checked) {
       summary.textContent = t("ds.selectHint");
@@ -665,8 +797,14 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
     const col = dataset.columns.find((c) => c.name === checked.value);
     const total = col.top_values.reduce((s, v) => s + v.count, 0);
     const split = col.top_values.map((v) => `${esc(v.value)} ${pct(v.count, total)}`).join(", ");
-    summary.innerHTML = `${esc(t("ds.target"))}: <strong>${esc(col.name)}</strong> (${split})`;
+    const modelText = compare ? t("ds.allModels", { n: models.length }) : modelLabel(selectedModel);
+    summary.innerHTML = `${esc(t("ds.target"))}: <strong>${esc(col.name)}</strong> (${split}) · ${esc(t("ds.modelLabel"))}: <strong>${esc(modelText)}</strong>`;
   }
+
+  modelGrid.addEventListener("change", (e) => {
+    selectedModel = e.target.value;
+    updateSelection();
+  });
 
   view.querySelector('[data-action="replace"]').addEventListener("click", () => renderUpload(dataset));
   view.querySelector("#only-binary").addEventListener("change", (e) => applyFilter(e.target.checked));
@@ -680,7 +818,7 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
       const job = await api("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: checked.value }),
+        body: JSON.stringify({ target: checked.value, models: chosenModels() }),
       });
       renderJob(job, dataset);
     } catch (err) {
@@ -696,8 +834,18 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
 /* ------------------------------------------------------------------ job progress + animation */
 
 function stepLabel(step) {
-  const key = `step.${step.key}`;
-  return I18N.en[key] ? t(key) : step.label;
+  if (step.key === "preprocess") return t("step.preprocess");
+  if (step.model) return t("step.train", { model: modelLabel(step.model) });
+  return step.key === "train" ? t("step.train", { model: "XGBoost" }) : step.label;  // older single-model jobs
+}
+
+/** Link to whatever finished before a job stopped (one run page, or a comparison). */
+function finishedRunsLink(job) {
+  const ids = job.run_ids || [];
+  if (!ids.length) return "";
+  const href = ids.length > 1 ? `#/compare/${ids.join(",")}` : `#/runs/${ids[0]}`;
+  const text = ids.length > 1 ? t("job.viewFinished.many", { n: ids.length }) : t("job.viewFinished.one");
+  return `<a class="btn btn-secondary" href="${href}">${esc(text)}</a>`;
 }
 
 function stepState(step, job) {
@@ -715,13 +863,12 @@ function stepState(step, job) {
  *   done       -> bars settle at full height
  * Pausable (it runs longer than 5 s) and static under prefers-reduced-motion.
  */
-function trainingAnimation(phase) {
+function trainingAnimation(phase, caption) {
   const bars = Array.from({ length: ANIM_BARS }, (_, i) => {
     const uneven = 30 + ((i * 37) % 61);                          // deterministic "raw data" heights
     const rising = Math.round(18 + 78 * (1 - Math.exp(-(i + 1) / 7)));  // learning-curve shape
     return `<span style="--i:${i};--h-raw:${uneven}%;--h-fit:${rising}%"></span>`;
   }).join("");
-  const caption = t(`anim.${phase}`);
   return `
     <div class="train-anim${animationPaused ? " is-paused" : ""}" data-phase="${phase}">
       <div class="anim-bars" aria-hidden="true">${bars}</div>
@@ -750,7 +897,15 @@ function renderJob(job, dataset) {
   const focusedToggle = active && active.classList.contains("anim-toggle");
   const openLogs = new Set([...view.querySelectorAll("details.log[open]")].map((d) => d.dataset.step));
   const running = job.steps.find((s) => s.status === "running");
-  const phase = succeeded ? "done" : running ? running.key : "preprocess";
+  const phase = succeeded ? "done" : running && running.key !== "preprocess" ? "train" : "preprocess";
+  const trainSteps = job.steps.filter((s) => s.key !== "preprocess");
+  let caption = t(`anim.${phase}`);
+  if (phase === "train") {
+    const model = modelLabel(running.model || "xgboost");
+    caption = trainSteps.length > 1
+      ? t("anim.trainOf", { model, i: trainSteps.indexOf(running) + 1, n: trainSteps.length })
+      : t("anim.train", { model });
+  }
   const title = failed ? "job.titleStopped" : succeeded ? "job.titleDone" : "job.titleRunning";
   const timeKey = failed ? "job.stoppedAfter" : "job.elapsed";
 
@@ -761,6 +916,7 @@ function renderJob(job, dataset) {
         <div class="alert-actions">
           ${dataset ? `<button class="btn btn-primary" type="button" data-action="back">${esc(t("job.chooseAnother"))}</button>` : ""}
           <a class="btn btn-secondary" href="#/runs">${esc(t("job.seeRuns"))}</a>
+          ${finishedRunsLink(job)}
         </div>
       </div>` : ""}
     <div class="page-head">
@@ -771,7 +927,7 @@ function renderJob(job, dataset) {
           <span data-elapsed>${esc(t(timeKey, { t: elapsed(job.started_at, job.finished_at) }))}</span></p>
       </div>
     </div>
-    ${failed ? "" : trainingAnimation(phase)}
+    ${failed ? "" : trainingAnimation(phase, caption)}
     <ol class="steps">
       ${job.steps.map((step, i) => `
         <li class="is-${esc(step.status)}">
@@ -815,8 +971,9 @@ function renderJob(job, dataset) {
     clearJobView();
     refreshRunsCount();
     // Hold the finished state briefly so the completion is visible, then open the run.
+    const ids = job.run_ids && job.run_ids.length ? job.run_ids : job.run_id ? [job.run_id] : [];
     pollTimer = setTimeout(() => {
-      location.hash = job.run_id ? `#/runs/${job.run_id}` : "#/runs";
+      location.hash = ids.length > 1 ? `#/compare/${ids.join(",")}` : ids.length ? `#/runs/${ids[0]}` : "#/runs";
     }, 1200);
   }
 }
@@ -837,6 +994,7 @@ function schedulePoll(job, dataset) {
 const RUN_COLUMNS = [
   { key: "run_id", label: "m.run", numeric: false },
   { key: "target", label: "m.target", numeric: false },
+  { key: "model_label", label: "m.model", numeric: false },
   { key: "f1_score", label: "m.f1", numeric: true },
   { key: "precision", label: "m.precision", numeric: true },
   { key: "recall", label: "m.recall", numeric: true },
@@ -869,6 +1027,7 @@ async function renderRuns() {
   }
 
   let sort = { key: "run_id", dir: "desc" };
+  const selected = new Set();  // run ids ticked for comparison; survives re-sorting
 
   function rowsHtml() {
     const sorted = [...runs].sort((a, b) => {
@@ -880,14 +1039,18 @@ async function renderRuns() {
     });
     return sorted.map((r) => `
       <tr>
+        <td class="select"><input type="checkbox" class="run-check" value="${esc(r.run_id)}"
+              aria-label="${esc(t("runs.selectRun", { id: r.run_id }))}" ${selected.has(r.run_id) ? "checked" : ""}></td>
         <td><a class="run-link" href="#/runs/${esc(r.run_id)}">${esc(r.run_id)}</a><span class="sub">${esc(runDate(r.run_id))}</span></td>
         <td>${esc(r.target)}${r.positive_class ? `<span class="sub">${esc(t("runs.positive", { v: r.positive_class }))}</span>` : ""}</td>
-        ${RUN_COLUMNS.slice(2).map((c) => `<td class="num">${num(r[c.key], c.key === "best_threshold" ? 2 : 3)}</td>`).join("")}
+        <td>${esc(r.model_label)}</td>
+        ${RUN_COLUMNS.slice(3).map((c) => `<td class="num">${num(r[c.key], c.key === "best_threshold" ? 2 : 3)}</td>`).join("")}
       </tr>`).join("");
   }
 
   function headHtml() {
-    return RUN_COLUMNS.map((c) => {
+    const selectHead = `<th scope="col" class="select"><span class="visually-hidden">${esc(t("runs.select"))}</span></th>`;
+    return selectHead + RUN_COLUMNS.map((c) => {
       const active = sort.key === c.key;
       const ariaSort = active ? (sort.dir === "asc" ? "ascending" : "descending") : "none";
       const arrow = active ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
@@ -903,8 +1066,12 @@ async function renderRuns() {
         <h1>${esc(t("runs.title"))}</h1>
         <p class="lede">${t(runs.length === 1 ? "runs.lede.one" : "runs.lede.many", { n: runs.length, code })}</p>
       </div>
-      <a class="btn btn-secondary" href="/api/experiments_log.csv" download>${esc(t("runs.download"))}</a>
+      <div class="head-actions">
+        <a class="btn btn-secondary" href="/api/experiments_log.csv" download>${esc(t("runs.download"))}</a>
+        <button class="btn btn-primary" type="button" id="compare-btn" disabled aria-describedby="compare-hint"></button>
+      </div>
     </div>
+    <p class="compare-hint" id="compare-hint">${esc(t("runs.compareHint"))}</p>
     <div class="table-wrap">
       <table>
         <caption class="visually-hidden">${esc(t("runs.caption"))}</caption>
@@ -923,6 +1090,114 @@ async function renderRuns() {
     view.querySelector("tbody").innerHTML = rowsHtml();
     view.querySelector(`.sort-btn[data-key="${key}"]`).focus();
   });
+
+  const compareBtn = view.querySelector("#compare-btn");
+  const syncCompare = () => {
+    compareBtn.textContent = t("runs.compare", { n: selected.size });
+    compareBtn.disabled = selected.size < 2;
+  };
+  view.querySelector("tbody").addEventListener("change", (e) => {
+    if (!e.target.classList.contains("run-check")) return;
+    if (e.target.checked) selected.add(e.target.value);
+    else selected.delete(e.target.value);
+    syncCompare();
+  });
+  compareBtn.addEventListener("click", () => {
+    // Keep the table order (newest first) so the comparison URL is stable.
+    const ids = runs.map((r) => r.run_id).filter((id) => selected.has(id));
+    if (ids.length >= 2) location.hash = `#/compare/${ids.join(",")}`;
+  });
+  syncCompare();
+}
+
+/* ------------------------------------------------------------------ comparison */
+
+async function renderCompare(ids) {
+  setTitle(t("cmp.title"));
+  renderLoading(t("cmp.loading"));
+  const unique = [...new Set(ids)];
+  let results;
+  try {
+    results = await Promise.all(unique.map((id) =>
+      api(`/api/runs/${id}`).catch((err) => (err.status === 404 ? null : Promise.reject(err)))));
+  } catch (err) {
+    renderError(t("cmp.title"), err, () => renderCompare(ids));
+    return;
+  }
+  const runs = results.filter(Boolean);
+  const missing = unique.length - runs.length;
+  const crumb = `<p class="breadcrumb"><a href="#/runs">${esc(t("runs.title"))}</a> / <span>${esc(t("cmp.title"))}</span></p>`;
+
+  if (runs.length < 2) {
+    render(`${crumb}
+      <div class="empty"><h1>${esc(t("cmp.title"))}</h1>
+        <p>${esc(t("cmp.notEnough"))}</p>
+        <a class="btn btn-primary" href="#/runs">${esc(t("run.back"))}</a></div>`);
+    return;
+  }
+
+  runs.sort((a, b) => (b.f1_score ?? -1) - (a.f1_score ?? -1));
+  const mixed = new Set(runs.map((r) => r.target)).size > 1;
+  const bestF1 = runs[0].run_id;
+  const bestPr = runs.reduce((a, b) => ((b.pr_auc ?? -1) > (a.pr_auc ?? -1) ? b : a)).run_id;
+  const heading = mixed
+    ? t("cmp.headingMixed", { n: runs.length })
+    : t("cmp.heading", { n: runs.length, target: runs[0].target });
+
+  const notes = [];
+  if (mixed) notes.push(t("cmp.mixed"));
+  if (missing) notes.push(t(missing === 1 ? "cmp.missing.one" : "cmp.missing.many", { n: missing }));
+
+  const tag = (text) => `<span class="best-tag">${esc(text)}</span>`;
+  const rows = runs.map((r) => `
+    <tr${r.run_id === bestF1 ? ' class="is-best"' : ""}>
+      <th scope="row">
+        <a href="#/runs/${esc(r.run_id)}">${esc(r.model_label)}</a>
+        ${r.run_id === bestF1 ? tag(t("cmp.bestF1")) : ""}${r.run_id === bestPr ? tag(t("cmp.bestPr")) : ""}
+        <span class="sub">${esc(r.run_id)}${mixed ? ` · ${esc(r.target)}` : ""}</span>
+      </th>
+      <td class="num">${num(r.f1_score)}</td>
+      <td class="num">${num(r.pr_auc)}</td>
+      <td class="num">${num(r.precision)}</td>
+      <td class="num">${num(r.recall)}</td>
+      <td class="num">${num(r.accuracy)}</td>
+      <td class="num">${num(r.best_threshold, 2)}</td>
+    </tr>`).join("");
+
+  const bars = runs.map((r) => `
+    <li>
+      <span class="cmp-name">${esc(r.model_label)}</span>
+      <span class="cmp-track" aria-hidden="true"><span style="width:${Math.max(0, Math.min(1, r.f1_score || 0)) * 100}%"></span></span>
+      <span class="cmp-val">${num(r.f1_score)}</span>
+    </li>`).join("");
+
+  render(`${crumb}
+    <div class="page-head">
+      <div>
+        <h1>${esc(heading)}</h1>
+        <p class="lede">${esc(t("cmp.lede"))}</p>
+      </div>
+    </div>
+    ${notes.map((n) => `<p class="note">${esc(n)}</p>`).join("")}
+    <section class="section" aria-labelledby="cmp-chart-heading">
+      <h2 id="cmp-chart-heading" class="h3">${esc(t("cmp.chart"))}</h2>
+      <ul class="cmp-bars">${bars}</ul>
+    </section>
+    <div class="table-wrap section">
+      <table>
+        <caption class="visually-hidden">${esc(t("cmp.caption"))}</caption>
+        <thead><tr>
+          <th scope="col">${esc(t("m.model"))}</th>
+          <th scope="col" class="num">${esc(t("m.f1"))}</th>
+          <th scope="col" class="num">${esc(t("m.prauc"))}</th>
+          <th scope="col" class="num">${esc(t("m.precision"))}</th>
+          <th scope="col" class="num">${esc(t("m.recall"))}</th>
+          <th scope="col" class="num">${esc(t("m.accuracy"))}</th>
+          <th scope="col" class="num">${esc(t("m.threshold"))}</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`);
 }
 
 /* ------------------------------------------------------------------ run detail */
@@ -994,6 +1269,7 @@ function tabPanel(id, run) {
         <p>${esc(t("shap.p1"))}</p>
         <p>${t("shap.p2", { pos })}</p>
         <p>${esc(t("shap.p3"))}</p>
+        ${I18N.en[`shap.note.${run.model}`] ? `<p class="note">${esc(t(`shap.note.${run.model}`))}</p>` : ""}
       </div>
     </div>`;
   }
@@ -1007,10 +1283,19 @@ function tabPanel(id, run) {
       </div>
     </div>`;
   }
+  const modelFile = run.model_file || "xgboost_model.json";
+  const loadKey = `files.load.${modelFile.split(".").pop()}`;
   const files = [
-    ["xgboost_model.json", t("files.model")],
+    [modelFile, `${t("files.modelPrefix", { model: run.model_label || "XGBoost" })} ${I18N.en[loadKey] ? t(loadKey) : ""}`],
     ["run_metrics.json", t("files.metrics")],
   ];
+  // Runs made before model choice have no "hyperparameters" in run_metrics.json: use the log columns.
+  const hp = run.hyperparameters;
+  const params = hp
+    ? Object.entries(hp).map(([k, v]) => [k, k === "scale_pos_weight" ? num(v) : v])
+    : [["max_depth", run.max_depth], ["learning_rate", run.learning_rate],
+       ["n_estimators", run.n_estimators], ["scale_pos_weight", num(run.scale_pos_weight)]];
+  if (hp && !("scale_pos_weight" in hp)) params.push([t("files.classWeight"), t("files.balanced")]);
   return `<div class="split">
     <div>
       <h2 class="h3" style="margin-bottom:0.75rem">${esc(t("files.heading"))}</h2>
@@ -1024,10 +1309,7 @@ function tabPanel(id, run) {
     <div>
       <h2 class="h3" style="margin-bottom:0.75rem">${esc(t("files.params"))}</h2>
       <dl class="kv">
-        <dt>max_depth</dt><dd>${esc(run.max_depth ?? "n/a")}</dd>
-        <dt>learning_rate</dt><dd>${esc(run.learning_rate ?? "n/a")}</dd>
-        <dt>n_estimators</dt><dd>${esc(run.n_estimators ?? "n/a")}</dd>
-        <dt>scale_pos_weight</dt><dd>${num(run.scale_pos_weight)}</dd>
+        ${params.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v ?? "n/a")}</dd>`).join("")}
         <dt>${esc(t("files.trainRows"))}</dt><dd>${run.n_train ? int(run.n_train) : "n/a"}</dd>
         <dt>${esc(t("files.features"))}</dt><dd>${run.n_features ? int(run.n_features) : "n/a"}</dd>
       </dl>
@@ -1073,6 +1355,7 @@ async function renderRun(runId) {
       <div>
         <h1>${esc(t("run.predicting", { target: run.target }))}</h1>
         <p class="meta">
+          <span>${t("run.modelMeta", { model: `<strong>${esc(run.model_label || "XGBoost")}</strong>` })}</span>
           <span>${esc(runDate(runId))}</span>
           ${positive}
           ${run.n_test ? `<span>${t("run.evaluatedOn", { n: `<strong>${int(run.n_test)}</strong>` })}</span>` : ""}

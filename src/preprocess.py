@@ -266,11 +266,13 @@ def one_hot_encode(X: pd.DataFrame, reserved: set[str]) -> pd.DataFrame:
     cat_cols = X.select_dtypes(include=STRING_DTYPES).columns.tolist()
     X = pd.get_dummies(X, columns=cat_cols, drop_first=True, dtype=np.uint8)
 
-    # XGBoost forbids '[', ']' and '<' in feature names; also guarantee uniqueness.
+    # Make feature names safe for every supported model: XGBoost forbids '[', ']' and '<',
+    # LightGBM forbids JSON characters (quotes, commas, colons, braces). Keep letters (any
+    # language), digits, '_', '.' and '-'; replace the rest, and guarantee uniqueness.
     seen, new_cols = set(reserved), []
     for col in X.columns:
-        name = re.sub(r"[\[\]<>]", "_", str(col))
-        name = re.sub(r"\s+", "_", name).strip("_") or "feature"
+        name = re.sub(r"[^\w.\-]", "_", str(col))
+        name = re.sub(r"_+", "_", name).strip("_") or "feature"
         base, i = name, 1
         while name in seen:
             i += 1

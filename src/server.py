@@ -5,16 +5,20 @@ Serves the static front-end (src/static) and a small JSON API:
     GET  /api/health                       liveness probe
     GET  /api/dataset                      profile of the current dataset (404 if none)
     POST /api/dataset                      upload a CSV, profile its columns
-    POST /api/jobs        {"target": ...}  start preprocess.py -> train.py in the background
+    GET  /api/models                       the models train.py can train
+    POST /api/jobs        {"target": ..., "models": [...]}
+                                           start preprocess.py, then train.py once per model,
+                                           in the background (several models = comparison)
     GET  /api/jobs/current                 the job that is running right now (or null)
-    GET  /api/jobs/{job_id}                status, per-step logs and resulting run id
+    GET  /api/jobs/{job_id}                status, per-step logs and resulting run ids
     GET  /api/runs                         every row of outputs/experiments_log.csv
     GET  /api/runs/{run_id}                one run: metrics, threshold curve, files
     GET  /api/runs/{run_id}/files/{name}   a plot, the model or run_metrics.json
     GET  /api/experiments_log.csv          the raw DIY experiment log
 
-The ML code is never imported here (except the shared CSV reader): pipeline stages
-run as subprocesses, exactly like they would from the command line.
+The ML code is never imported here (except the shared CSV reader and the model registry's
+names, which import no ML library): pipeline stages run as subprocesses, exactly like they
+would from the command line.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from models import DEFAULT_MODEL, MODELS
 from preprocess import read_dataset
 
 # --------------------------------------------------------------------------- #
@@ -57,18 +62,18 @@ STATIC_DIR = SRC_DIR / "static"
 STEP_TIMEOUT_S = 1800
 ALLOWED_EXTENSIONS = {".csv", ".tsv", ".txt"}
 RUN_ID_RE = re.compile(r"^run_\d{8}_\d{6}$")
+MODEL_MEDIA_TYPES = {".json": "application/json", ".txt": "text/plain"}
 RUN_FILES = {
     "confusion_matrix.png": "image/png",
     "roc_curve.png": "image/png",
     "pr_curve.png": "image/png",
     "shap_summary.png": "image/png",
-    "xgboost_model.json": "application/json",
     "run_metrics.json": "application/json",
+    # one model file per model type, e.g. xgboost_model.json, catboost_model.cbm
+    **{spec.filename: MODEL_MEDIA_TYPES.get(Path(spec.filename).suffix, "application/octet-stream")
+       for spec in MODELS.values()},
 }
-PIPELINE_STEPS = [
-    ("preprocess", "Validate and preprocess the data", "preprocess.py"),
-    ("train", "Train XGBoost, tune the threshold, explain the model", "train.py"),
-]
+LEGACY_MODEL_LABEL = "XGBoost"  # log rows from before the Model column were XGBoost runs
 NUMERIC_LOG_FIELDS = {
     "Max_Depth": int, "N_Estimators": int, "Learning_Rate": float, "Scale_Pos_Weight": float,
     "Best_Threshold": float, "F1_Score": float, "Precision": float, "Recall": float, "PR_AUC": float,
@@ -167,16 +172,37 @@ def last_error_line(output: str) -> str:
     return line.split("| ")[-1].strip()
 
 
+def build_steps(models: list[str]) -> list[dict]:
+    """One preprocessing step, then one training step per model (all on the same split)."""
+    steps = [{"key": "preprocess", "model": None, "label": "Validate and preprocess the data"}]
+    steps += [{"key": f"train_{key}", "model": key,
+               "label": f"Train {MODELS[key].label}, tune the threshold, explain the model"}
+              for key in models]
+    for step in steps:
+        step.update({"status": "waiting", "log": "", "run_id": None, "started_at": None, "finished_at": None})
+    return steps
+
+
+def step_command(step: dict, target: str) -> list[str]:
+    if step["model"] is None:
+        return [sys.executable, str(SRC_DIR / "preprocess.py"), "--target", target]
+    return [sys.executable, str(SRC_DIR / "train.py"), "--target", target, "--model", step["model"]]
+
+
 def run_job(job_id: str, target: str) -> None:
+    """Run the steps in order and stop at the first failure.
+
+    Runs that finished before a failure stay in the experiment log and in job["run_ids"].
+    """
     global CURRENT_JOB_ID
     job = JOBS[job_id]
     try:
-        for step, (_, _, script) in zip(job["steps"], PIPELINE_STEPS):
+        for step in job["steps"]:
             with JOBS_LOCK:
                 step["status"], step["started_at"] = "running", now_iso()
             try:
                 result = subprocess.run(
-                    [sys.executable, str(SRC_DIR / script), "--target", target],
+                    step_command(step, target),
                     cwd=ROOT, capture_output=True, text=True, timeout=STEP_TIMEOUT_S,
                 )
                 output = (result.stdout + result.stderr).strip()
@@ -186,17 +212,21 @@ def run_job(job_id: str, target: str) -> None:
                 output, failed = "", True
                 error = f"step timed out after {STEP_TIMEOUT_S // 60} minutes"
 
+            found = re.findall(r"run_\d{8}_\d{6}", output) if step["model"] and not failed else []
             with JOBS_LOCK:
                 step["log"], step["finished_at"] = output, now_iso()
                 step["status"] = "failed" if failed else "done"
+                if found:
+                    step["run_id"] = found[-1]
+                    job["run_ids"].append(found[-1])
+                    job["run_id"] = found[-1]
                 if failed:
                     job["status"], job["error"] = "failed", error
             if failed:
                 return
 
-        found = re.findall(r"run_\d{8}_\d{6}", job["steps"][-1]["log"])
         with JOBS_LOCK:
-            job["status"], job["run_id"] = "succeeded", (found[-1] if found else None)
+            job["status"] = "succeeded"
     except Exception as exc:  # noqa: BLE001 - surface anything unexpected to the UI
         with JOBS_LOCK:
             job["status"], job["error"] = "failed", f"internal error: {exc}"
@@ -238,7 +268,8 @@ def read_log() -> list[dict]:
 
     runs = []
     for row in rows:
-        run = {"run_id": row.get("Timestamp", ""), "target": row.get("Target_Column", "")}
+        run = {"run_id": row.get("Timestamp", ""), "target": row.get("Target_Column", ""),
+               "model_label": row.get("Model") or LEGACY_MODEL_LABEL}
         for field, cast in NUMERIC_LOG_FIELDS.items():
             try:
                 run[field.lower()] = cast(float(row[field]))
@@ -265,11 +296,18 @@ def run_or_404(run_id: str) -> dict:
 # --------------------------------------------------------------------------- #
 class JobRequest(BaseModel):
     target: str
+    models: list[str] = [DEFAULT_MODEL]
 
 
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/api/models")
+def list_models() -> list[dict]:
+    return [{"key": spec.key, "label": spec.label, "default": spec.key == DEFAULT_MODEL}
+            for spec in MODELS.values()]
 
 
 @app.get("/api/dataset")
@@ -311,18 +349,21 @@ def start_job(req: JobRequest) -> dict:
         raise HTTPException(400, "upload a dataset first")
     if req.target not in {c["name"] for c in info["columns"]}:
         raise HTTPException(400, f"column '{req.target}' is not in the dataset")
+    unknown = [m for m in req.models if m not in MODELS]
+    if unknown or not req.models:
+        raise HTTPException(400, f"choose at least one model from: {', '.join(MODELS)}"
+                                 + (f" (unknown: {', '.join(unknown)})" if unknown else ""))
+    models = list(dict.fromkeys(req.models))  # drop duplicates, keep order
 
     with JOBS_LOCK:
         if CURRENT_JOB_ID is not None:
             raise HTTPException(409, "another training job is already running")
         job_id = uuid.uuid4().hex[:12]
         job = {
-            "id": job_id, "target": req.target, "dataset": info["filename"],
-            "status": "running", "error": None, "run_id": None,
+            "id": job_id, "target": req.target, "dataset": info["filename"], "models": models,
+            "status": "running", "error": None, "run_id": None, "run_ids": [],
             "started_at": now_iso(), "finished_at": None,
-            "steps": [{"key": key, "label": label, "status": "waiting", "log": "",
-                       "started_at": None, "finished_at": None}
-                      for key, label, _ in PIPELINE_STEPS],
+            "steps": build_steps(models),
         }
         JOBS[job_id] = job
         CURRENT_JOB_ID = job_id
@@ -364,6 +405,9 @@ def get_run(run_id: str) -> dict:
             files[name] = entry
     return {
         **run,
+        "model": metrics.get("model", "xgboost"),
+        "model_file": metrics.get("model_file", MODELS[DEFAULT_MODEL].filename),
+        "hyperparameters": metrics.get("hyperparameters"),
         "negative_class": metrics.get("negative_class"),
         "n_train": metrics.get("n_train"),
         "n_test": metrics.get("n_test"),
