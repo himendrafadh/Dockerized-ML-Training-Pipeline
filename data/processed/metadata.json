@@ -1,14 +1,12 @@
 {
-  "target": "Survived",
+  "target": "Result (Win versus Points Lost)",
   "positive_class": "1",
   "negative_class": "0",
   "reason": "recognised yes/true/1-style label",
-  "n_rows": 891,
-  "n_features": 8,
+  "n_rows": 62,
+  "n_features": 142,
   "dropped_columns": {
-    "PassengerId": "ID-like (every value is unique)",
-    "Name": "ID-like (every value is unique)",
-    "Ticket": "high-cardinality text (681 categories > 50)",
-    "Cabin": "high-cardinality text (147 categories > 50)"
+    "Date": "ID-like (every value is unique)",
+    "Result": "target leakage (categories explain 100.0% of the target)"
   }
 }
