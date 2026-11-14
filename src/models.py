@@ -42,7 +42,7 @@ def _build_xgboost(hp: dict, spw: float, seed: int):
 
     return XGBClassifier(
         max_depth=hp["max_depth"], learning_rate=hp["learning_rate"], n_estimators=hp["n_estimators"],
-        tree_method="hist", scale_pos_weight=spw, eval_metric="aucpr",
+        tree_method="hist", scale_pos_weight=float(spw), eval_metric="aucpr",
         random_state=seed, n_jobs=-1,
     )
 
@@ -82,7 +82,7 @@ def _build_lightgbm(hp: dict, spw: float, seed: int):
 
     return LGBMClassifier(
         n_estimators=hp["n_estimators"], learning_rate=hp["learning_rate"], max_depth=hp["max_depth"],
-        scale_pos_weight=spw, random_state=seed, n_jobs=-1, verbosity=-1,
+        scale_pos_weight=float(spw), random_state=seed, n_jobs=-1, verbosity=-1,
     )
 
 
@@ -91,7 +91,8 @@ def _build_catboost(hp: dict, spw: float, seed: int):
 
     return CatBoostClassifier(
         iterations=hp["n_estimators"], learning_rate=hp["learning_rate"], depth=hp["max_depth"],
-        scale_pos_weight=spw, random_seed=seed, thread_count=-1,
+        # plain float: CatBoost converts numpy scalars, which breaks sklearn.base.clone()
+        scale_pos_weight=float(spw), random_seed=seed, thread_count=-1,
         verbose=0, allow_writing_files=False,  # no catboost_info/ folder next to the code
     )
 

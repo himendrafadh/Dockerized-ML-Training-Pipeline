@@ -162,6 +162,16 @@ const I18N = {
     "ds.trainAll": "Train and compare {n} models",
     "ds.modelLabel": "Model",
     "ds.allModels": "all {n} models",
+    "ds.excludeHeading": "Exclude columns (optional)",
+    "ds.excludeLede": "Leave out columns the model must not learn from, for example values that are only known after the outcome, such as the duration of a sales call. ID-like and constant columns are already removed automatically.",
+    "ds.excludeToggle": "Choose columns to exclude",
+    "ds.excludeCount.none": "none selected",
+    "ds.excludeCount": "{n} selected",
+    "ds.excludedLabel": "Excluded",
+    "ds.excludeTarget": "target",
+    "job.excluded": "excluded: {cols}",
+    "files.excluded": "Excluded columns",
+    "files.none": "none",
     "model.compare": "Compare all models",
     "model.compare.desc": "Trains all {n} models one after another on the same split and shows them side by side.",
     "model.xgboost.desc": "Gradient-boosted trees. A strong default for tabular data.",
@@ -350,6 +360,16 @@ const I18N = {
     "ds.trainAll": "Latih dan bandingkan {n} model",
     "ds.modelLabel": "Model",
     "ds.allModels": "semua {n} model",
+    "ds.excludeHeading": "Kecualikan kolom (opsional)",
+    "ds.excludeLede": "Keluarkan kolom yang tidak boleh dipelajari model, misalnya nilai yang baru diketahui setelah hasilnya terjadi, seperti lama telepon penawaran. Kolom ID dan kolom konstan sudah dibuang otomatis.",
+    "ds.excludeToggle": "Pilih kolom yang dikecualikan",
+    "ds.excludeCount.none": "belum ada yang dipilih",
+    "ds.excludeCount": "{n} dipilih",
+    "ds.excludedLabel": "Dikecualikan",
+    "ds.excludeTarget": "target",
+    "job.excluded": "dikecualikan: {cols}",
+    "files.excluded": "Kolom yang dikecualikan",
+    "files.none": "tidak ada",
     "model.compare": "Bandingkan semua model",
     "model.compare.desc": "Melatih {n} model satu per satu pada split yang sama, lalu menampilkannya berdampingan.",
     "model.xgboost.desc": "Pohon gradient boosting. Pilihan awal yang kuat untuk data tabel.",
@@ -421,6 +441,8 @@ let firstRoute = true;
 let animationPaused = false;
 let modelsCache = null;    // [{key, label, default}] from /api/models
 let selectedModel = null;  // a model key, or "compare" for all models
+let excludedColumns = new Set();  // columns left out of training, per dataset
+let excludedFor = null;           // which dataset the set above belongs to
 
 async function loadModels() {
   if (!modelsCache) modelsCache = await api("/api/models");
@@ -706,6 +728,16 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
   if (!selectedModel || (selectedModel !== "compare" && !models.some((m) => m.key === selectedModel))) {
     selectedModel = (models.find((m) => m.default) || models[0]).key;
   }
+  const datasetKey = `${dataset.filename}|${dataset.uploaded_at}`;
+  if (excludedFor !== datasetKey) {  // a new upload starts with nothing excluded
+    excludedColumns = new Set();
+    excludedFor = datasetKey;
+  }
+  const excludeItems = dataset.columns.map((c) => `
+    <label class="check exclude-item">
+      <input type="checkbox" value="${esc(c.name)}" ${excludedColumns.has(c.name) ? "checked" : ""}>
+      <span>${esc(c.name)}<span class="exclude-note"></span></span>
+    </label>`).join("");
   const modelOption = (key, label, desc, cls = "") => `
     <label class="model-option ${cls}${key === selectedModel ? " is-selected" : ""}" for="model-${key}">
       <input type="radio" name="model" id="model-${key}" value="${key}" ${key === selectedModel ? "checked" : ""}>
@@ -743,6 +775,18 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
       </fieldset>
     </section>
 
+    <section class="section" aria-labelledby="exclude-heading">
+      <h2 id="exclude-heading">${esc(t("ds.excludeHeading"))}</h2>
+      <p>${esc(t("ds.excludeLede"))}</p>
+      <details class="exclude-details" ${excludedColumns.size ? "open" : ""}>
+        <summary>${esc(t("ds.excludeToggle"))} <span class="exclude-count" aria-live="polite"></span></summary>
+        <fieldset class="exclude-grid">
+          <legend class="visually-hidden">${esc(t("ds.excludeHeading"))}</legend>
+          ${excludeItems}
+        </fieldset>
+      </details>
+    </section>
+
     <section class="section" aria-labelledby="model-heading">
       <h2 id="model-heading">${esc(t("ds.modelHeading"))}</h2>
       <p>${esc(t("ds.modelLede"))}</p>
@@ -765,6 +809,22 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
   const trainBtn = view.querySelector("#train-btn");
   const summary = view.querySelector("#target-summary");
   const chosenModels = () => (selectedModel === "compare" ? models.map((m) => m.key) : [selectedModel]);
+  const excludeGrid = view.querySelector(".exclude-grid");
+  const excludeCount = view.querySelector(".exclude-count");
+
+  /** The target can never be excluded: disable its checkbox and drop it from the set. */
+  function syncExclude(target) {
+    excludeGrid.querySelectorAll("input").forEach((box) => {
+      const isTarget = box.value === target;
+      if (isTarget) { box.checked = false; excludedColumns.delete(box.value); }
+      box.disabled = isTarget;
+      box.closest(".exclude-item").classList.toggle("is-target", isTarget);
+      box.closest(".exclude-item").querySelector(".exclude-note").textContent = isTarget ? ` (${t("ds.excludeTarget")})` : "";
+    });
+    excludeCount.textContent = excludedColumns.size
+      ? `· ${t("ds.excludeCount", { n: excludedColumns.size })}`
+      : `· ${t("ds.excludeCount.none")}`;
+  }
 
   function applyFilter(checked) {
     view.dataset.onlyBinary = String(checked);
@@ -775,6 +835,7 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
 
   function updateSelection() {
     const checked = grid.querySelector('input[name="target"]:checked');
+    syncExclude(checked ? checked.value : null);
     grid.querySelectorAll(".col-card").forEach((card) => {
       const on = card.querySelector("input").checked;
       card.classList.toggle("is-selected", on);
@@ -798,11 +859,19 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
     const total = col.top_values.reduce((s, v) => s + v.count, 0);
     const split = col.top_values.map((v) => `${esc(v.value)} ${pct(v.count, total)}`).join(", ");
     const modelText = compare ? t("ds.allModels", { n: models.length }) : modelLabel(selectedModel);
-    summary.innerHTML = `${esc(t("ds.target"))}: <strong>${esc(col.name)}</strong> (${split}) · ${esc(t("ds.modelLabel"))}: <strong>${esc(modelText)}</strong>`;
+    const excludedText = excludedColumns.size
+      ? ` · ${esc(t("ds.excludedLabel"))}: <strong>${esc([...excludedColumns].join(", "))}</strong>`
+      : "";
+    summary.innerHTML = `${esc(t("ds.target"))}: <strong>${esc(col.name)}</strong> (${split}) · ${esc(t("ds.modelLabel"))}: <strong>${esc(modelText)}</strong>${excludedText}`;
   }
 
   modelGrid.addEventListener("change", (e) => {
     selectedModel = e.target.value;
+    updateSelection();
+  });
+  excludeGrid.addEventListener("change", (e) => {
+    if (e.target.checked) excludedColumns.add(e.target.value);
+    else excludedColumns.delete(e.target.value);
     updateSelection();
   });
 
@@ -818,7 +887,7 @@ function renderDataset(dataset, { target = null, notice = null } = {}) {
       const job = await api("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: checked.value, models: chosenModels() }),
+        body: JSON.stringify({ target: checked.value, models: chosenModels(), exclude: [...excludedColumns] }),
       });
       renderJob(job, dataset);
     } catch (err) {
@@ -924,7 +993,8 @@ function renderJob(job, dataset) {
         <p class="breadcrumb">${esc(job.dataset)}</p>
         <h1>${esc(t(title, { target: job.target }))}</h1>
         <p class="meta"><span>${esc(t("job.started", { time: new Date(job.started_at).toLocaleTimeString(locale()) }))}</span>
-          <span data-elapsed>${esc(t(timeKey, { t: elapsed(job.started_at, job.finished_at) }))}</span></p>
+          <span data-elapsed>${esc(t(timeKey, { t: elapsed(job.started_at, job.finished_at) }))}</span>
+          ${job.exclude && job.exclude.length ? `<span>${esc(t("job.excluded", { cols: job.exclude.join(", ") }))}</span>` : ""}</p>
       </div>
     </div>
     ${failed ? "" : trainingAnimation(phase, caption)}
@@ -1296,6 +1366,7 @@ function tabPanel(id, run) {
     : [["max_depth", run.max_depth], ["learning_rate", run.learning_rate],
        ["n_estimators", run.n_estimators], ["scale_pos_weight", num(run.scale_pos_weight)]];
   if (hp && !("scale_pos_weight" in hp)) params.push([t("files.classWeight"), t("files.balanced")]);
+  params.push([t("files.excluded"), (run.excluded_columns || []).join(", ") || t("files.none")]);
   return `<div class="split">
     <div>
       <h2 class="h3" style="margin-bottom:0.75rem">${esc(t("files.heading"))}</h2>

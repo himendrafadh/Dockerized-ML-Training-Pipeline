@@ -1,12 +1,9 @@
 {
-  "target": "Result (Win versus Points Lost)",
-  "positive_class": "1",
-  "negative_class": "0",
+  "target": "deposit",
+  "positive_class": "yes",
+  "negative_class": "no",
   "reason": "recognised yes/true/1-style label",
-  "n_rows": 62,
-  "n_features": 142,
-  "dropped_columns": {
-    "Date": "ID-like (every value is unique)",
-    "Result": "target leakage (categories explain 100.0% of the target)"
-  }
+  "n_rows": 11162,
+  "n_features": 42,
+  "dropped_columns": {}
 }

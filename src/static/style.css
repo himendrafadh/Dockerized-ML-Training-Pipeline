@@ -425,6 +425,25 @@ figcaption strong { color: var(--ink); }
 .files .fdesc { display: block; color: var(--muted); font-size: 0.85rem; font-family: var(--font); }
 .split { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 2rem; }
 
+/* ---------- Exclude columns (collapsible checklist, so long column lists stay out of the way) ---------- */
+.exclude-details { margin-top: 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.exclude-details > summary { min-height: 44px; padding: 0.5rem 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.4rem; font-weight: 600; }
+.exclude-details > summary:hover { background: var(--surface); }
+/* display:flex removes the native disclosure triangle, so draw one: closed = right, open = down */
+.exclude-details > summary::-webkit-details-marker { display: none; }
+.exclude-details > summary::before { content: "\25B8"; color: var(--muted); width: 1em; }
+.exclude-details[open] > summary::before { content: "\25BE"; }
+.exclude-details[open] > summary { border-bottom: 1px solid var(--line); }
+.exclude-count { color: var(--muted); font-weight: 400; }
+.exclude-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 1rem;
+  border: 0; margin: 0; padding: 0.4rem 1rem 0.6rem; min-width: 0;
+}
+.exclude-item { min-width: 0; }
+.exclude-item > span { overflow-wrap: anywhere; }
+.exclude-item.is-target { color: var(--muted); }
+.exclude-note { font-size: 0.85em; }
+
 /* ---------- Model choice (same card language as the column cards) ---------- */
 .model-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 .model-option {

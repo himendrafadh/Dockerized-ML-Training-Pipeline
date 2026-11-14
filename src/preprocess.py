@@ -309,8 +309,24 @@ def parse_args() -> argparse.Namespace:
                    help="Drop text columns with more distinct values than this")
     p.add_argument("--leakage-threshold", type=float, default=0.98,
                    help="Drop features whose |correlation| with the target is >= this")
+    p.add_argument("--exclude", action="append", default=[], metavar="COLUMN",
+                   help="Column to leave out of training, e.g. one only known after the outcome. "
+                        "Repeat for several columns; use --exclude=NAME for names starting with '-'")
     p.add_argument("--log-level", default="INFO")
     return p.parse_args()
+
+
+def exclude_columns(df: pd.DataFrame, target: str, columns: list[str]) -> tuple[pd.DataFrame, list[str]]:
+    """Drop user-excluded columns (validated: must exist and must not be the target)."""
+    excluded = [c.strip() for c in dict.fromkeys(columns) if c.strip()]  # de-duplicate, keep order
+    if target in excluded:
+        raise DataValidationError(f"The target column '{target}' cannot also be excluded")
+    unknown = [c for c in excluded if c not in df.columns]
+    if unknown:
+        raise DataValidationError(f"Columns to exclude not found: {unknown}")
+    if excluded:
+        logger.info("Excluding %d column(s) chosen by the user: %s", len(excluded), excluded)
+    return df.drop(columns=excluded), excluded
 
 
 def main() -> None:
@@ -321,6 +337,7 @@ def main() -> None:
     df = load_csv(args.input)
     if args.target not in df.columns:
         raise DataValidationError(f"Target column '{args.target}' not found. Columns: {list(df.columns)}")
+    df, excluded = exclude_columns(df, args.target, args.exclude)
 
     df = clean_string_cells(df)
 
@@ -342,7 +359,7 @@ def main() -> None:
     split_and_save(X, y, args.target, args.output_dir, args.test_size, args.random_state)
 
     meta = {"target": args.target, **mapping, "n_rows": int(len(df)),
-            "n_features": int(X.shape[1]), "dropped_columns": dropped}
+            "n_features": int(X.shape[1]), "excluded_columns": excluded, "dropped_columns": dropped}
     (args.output_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
     logger.info("=== Stage 1: Preprocessing finished ===")
 

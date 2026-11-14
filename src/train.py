@@ -130,6 +130,15 @@ def load_class_labels(train_path: Path) -> dict[str, str]:
     return labels
 
 
+def load_excluded_columns(train_path: Path) -> list[str]:
+    """Columns the user left out in preprocess.py (--exclude), recorded for the run report."""
+    meta_path = train_path.parent / "metadata.json"
+    try:
+        return list(json.loads(meta_path.read_text()).get("excluded_columns", []))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 def save_confusion_matrix(y_true, proba, threshold: float, labels: dict, out_path: Path) -> None:
     preds = (proba >= threshold).astype(int)
     fig, ax = plt.subplots(figsize=(6, 5))
@@ -364,7 +373,8 @@ def main() -> None:
 
     (run_dir / "run_metrics.json").write_text(json.dumps({
         "run_id": run_id, "target": args.target, "model": spec.key, "model_label": spec.label,
-        "model_file": spec.filename, "hyperparameters": used, **labels, "best_threshold": best_t,
+        "model_file": spec.filename, "hyperparameters": used, **labels,
+        "excluded_columns": load_excluded_columns(args.train_path), "best_threshold": best_t,
         "metrics": metrics, "plots": saved_plots, "n_train": len(X_train), "n_test": len(X_test),
         "n_features": X_train.shape[1], "threshold_curve": curve.to_dict(orient="records"),
     }, indent=2))

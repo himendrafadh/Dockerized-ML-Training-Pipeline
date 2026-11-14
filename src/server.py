@@ -6,9 +6,10 @@ Serves the static front-end (src/static) and a small JSON API:
     GET  /api/dataset                      profile of the current dataset (404 if none)
     POST /api/dataset                      upload a CSV, profile its columns
     GET  /api/models                       the models train.py can train
-    POST /api/jobs        {"target": ..., "models": [...]}
-                                           start preprocess.py, then train.py once per model,
-                                           in the background (several models = comparison)
+    POST /api/jobs        {"target": ..., "models": [...], "exclude": [...]}
+                                           start preprocess.py (minus excluded columns), then
+                                           train.py once per model, in the background
+                                           (several models = comparison)
     GET  /api/jobs/current                 the job that is running right now (or null)
     GET  /api/jobs/{job_id}                status, per-step logs and resulting run ids
     GET  /api/runs                         every row of outputs/experiments_log.csv
@@ -183,9 +184,11 @@ def build_steps(models: list[str]) -> list[dict]:
     return steps
 
 
-def step_command(step: dict, target: str) -> list[str]:
+def step_command(step: dict, target: str, exclude: list[str]) -> list[str]:
     if step["model"] is None:
-        return [sys.executable, str(SRC_DIR / "preprocess.py"), "--target", target]
+        # "--exclude=NAME" (one token) so column names starting with '-' are not read as options
+        return [sys.executable, str(SRC_DIR / "preprocess.py"), "--target", target,
+                *[f"--exclude={name}" for name in exclude]]
     return [sys.executable, str(SRC_DIR / "train.py"), "--target", target, "--model", step["model"]]
 
 
@@ -202,7 +205,7 @@ def run_job(job_id: str, target: str) -> None:
                 step["status"], step["started_at"] = "running", now_iso()
             try:
                 result = subprocess.run(
-                    step_command(step, target),
+                    step_command(step, target, job["exclude"]),
                     cwd=ROOT, capture_output=True, text=True, timeout=STEP_TIMEOUT_S,
                 )
                 output = (result.stdout + result.stderr).strip()
@@ -297,6 +300,7 @@ def run_or_404(run_id: str) -> dict:
 class JobRequest(BaseModel):
     target: str
     models: list[str] = [DEFAULT_MODEL]
+    exclude: list[str] = []  # columns to leave out, e.g. ones only known after the outcome
 
 
 @app.get("/api/health")
@@ -354,13 +358,22 @@ def start_job(req: JobRequest) -> dict:
         raise HTTPException(400, f"choose at least one model from: {', '.join(MODELS)}"
                                  + (f" (unknown: {', '.join(unknown)})" if unknown else ""))
     models = list(dict.fromkeys(req.models))  # drop duplicates, keep order
+    columns = {c["name"] for c in info["columns"]}
+    exclude = list(dict.fromkeys(req.exclude))
+    if req.target in exclude:
+        raise HTTPException(400, "the target column cannot also be excluded")
+    unknown_cols = [c for c in exclude if c not in columns]
+    if unknown_cols:
+        raise HTTPException(400, f"columns to exclude are not in the dataset: {', '.join(unknown_cols)}")
+    if len(columns) - len(exclude) < 2:
+        raise HTTPException(400, "keep at least one feature column besides the target")
 
     with JOBS_LOCK:
         if CURRENT_JOB_ID is not None:
             raise HTTPException(409, "another training job is already running")
         job_id = uuid.uuid4().hex[:12]
         job = {
-            "id": job_id, "target": req.target, "dataset": info["filename"], "models": models,
+            "id": job_id, "target": req.target, "dataset": info["filename"], "models": models, "exclude": exclude,
             "status": "running", "error": None, "run_id": None, "run_ids": [],
             "started_at": now_iso(), "finished_at": None,
             "steps": build_steps(models),
@@ -408,6 +421,7 @@ def get_run(run_id: str) -> dict:
         "model": metrics.get("model", "xgboost"),
         "model_file": metrics.get("model_file", MODELS[DEFAULT_MODEL].filename),
         "hyperparameters": metrics.get("hyperparameters"),
+        "excluded_columns": metrics.get("excluded_columns", []),
         "negative_class": metrics.get("negative_class"),
         "n_train": metrics.get("n_train"),
         "n_test": metrics.get("n_test"),

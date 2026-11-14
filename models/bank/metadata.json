@@ -1,0 +1,131 @@
+{
+  "dataset": "Bank Marketing, Kaggle bank.csv (data/raw/bank.csv)",
+  "clean_dataset": "data/clean/bank_marketing_clean.csv",
+  "created": "2026-11-14T12:52:15",
+  "target": "deposit",
+  "positive_class": "yes",
+  "negative_class": "no",
+  "reason": "recognised yes/true/1-style label",
+  "manual_leakage_columns": [
+    "duration"
+  ],
+  "auto_dropped_columns": {},
+  "feature_columns": [
+    "age",
+    "balance",
+    "day",
+    "campaign",
+    "pdays",
+    "previous",
+    "job_blue-collar",
+    "job_entrepreneur",
+    "job_housemaid",
+    "job_management",
+    "job_retired",
+    "job_self-employed",
+    "job_services",
+    "job_student",
+    "job_technician",
+    "job_unemployed",
+    "job_unknown",
+    "marital_married",
+    "marital_single",
+    "education_secondary",
+    "education_tertiary",
+    "education_unknown",
+    "default_yes",
+    "housing_yes",
+    "loan_yes",
+    "contact_telephone",
+    "contact_unknown",
+    "month_aug",
+    "month_dec",
+    "month_feb",
+    "month_jan",
+    "month_jul",
+    "month_jun",
+    "month_mar",
+    "month_may",
+    "month_nov",
+    "month_oct",
+    "month_sep",
+    "poutcome_other",
+    "poutcome_success",
+    "poutcome_unknown"
+  ],
+  "hyperparameters": {
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "n_estimators": 150
+  },
+  "scale_pos_weight": 1.1103757976837627,
+  "test_size": 0.2,
+  "random_state": 42,
+  "best_model": "lightgbm",
+  "models": {
+    "lightgbm": {
+      "label": "LightGBM",
+      "file": "lightgbm_model.txt",
+      "threshold": 0.38,
+      "test_accuracy": 0.6865,
+      "test_f1": 0.7054,
+      "test_roc_auc": 0.7949,
+      "cv_f1": 0.7087
+    },
+    "xgboost": {
+      "label": "XGBoost",
+      "file": "xgboost_model.json",
+      "threshold": 0.37,
+      "test_accuracy": 0.6838,
+      "test_f1": 0.7085,
+      "test_roc_auc": 0.7964,
+      "cv_f1": 0.7085
+    },
+    "hist_gradient_boosting": {
+      "label": "HistGradientBoosting",
+      "file": "hist_gradient_boosting_model.joblib",
+      "threshold": 0.39,
+      "test_accuracy": 0.7058,
+      "test_f1": 0.7157,
+      "test_roc_auc": 0.7943,
+      "cv_f1": 0.7075
+    },
+    "catboost": {
+      "label": "CatBoost",
+      "file": "catboost_model.cbm",
+      "threshold": 0.45,
+      "test_accuracy": 0.7282,
+      "test_f1": 0.7141,
+      "test_roc_auc": 0.792,
+      "cv_f1": 0.7064
+    },
+    "logistic_regression": {
+      "label": "Logistic Regression",
+      "file": "logistic_regression_model.joblib",
+      "threshold": 0.39,
+      "test_accuracy": 0.6525,
+      "test_f1": 0.6861,
+      "test_roc_auc": 0.7579,
+      "cv_f1": 0.6905
+    },
+    "random_forest": {
+      "label": "Random Forest",
+      "file": "random_forest_model.joblib",
+      "threshold": 0.44,
+      "test_accuracy": 0.6641,
+      "test_f1": 0.6934,
+      "test_roc_auc": 0.7644,
+      "cv_f1": 0.6872
+    }
+  },
+  "accuracy_mode": {
+    "description": "no class weights; threshold chosen for the highest cross-validated accuracy",
+    "model": "hist_gradient_boosting",
+    "label": "HistGradientBoosting",
+    "file": "accuracy_mode/hist_gradient_boosting_model.joblib",
+    "threshold": 0.51,
+    "test_accuracy": 0.7367,
+    "test_recall": 0.5992,
+    "test_f1": 0.6832
+  }
+}

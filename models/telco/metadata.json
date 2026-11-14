@@ -1,0 +1,133 @@
+{
+  "dataset": "IBM Telco Customer Churn (data/raw/Telco_customer_churn.csv)",
+  "clean_dataset": "data/clean/telco_churn_clean.csv",
+  "created": "2026-11-14T12:51:59",
+  "target": "Churn Label",
+  "positive_class": "Yes",
+  "negative_class": "No",
+  "reason": "recognised yes/true/1-style label",
+  "manual_leakage_columns": [
+    "Churn Score",
+    "Churn Reason",
+    "CLTV"
+  ],
+  "auto_dropped_columns": {
+    "CustomerID": "ID-like (every value is unique)",
+    "Count": "constant column",
+    "Country": "constant column",
+    "State": "constant column",
+    "City": "high-cardinality text (1129 categories > 50)",
+    "Lat Long": "high-cardinality text (1652 categories > 50)",
+    "Churn Value": "target leakage (|corr with target| = 1.000)"
+  },
+  "feature_columns": [
+    "Zip_Code",
+    "Latitude",
+    "Longitude",
+    "Tenure_Months",
+    "Monthly_Charges",
+    "Total_Charges",
+    "Gender_Male",
+    "Senior_Citizen_Yes",
+    "Partner_Yes",
+    "Dependents_Yes",
+    "Phone_Service_Yes",
+    "Multiple_Lines_No_phone_service",
+    "Multiple_Lines_Yes",
+    "Internet_Service_Fiber_optic",
+    "Internet_Service_No",
+    "Online_Security_No_internet_service",
+    "Online_Security_Yes",
+    "Online_Backup_No_internet_service",
+    "Online_Backup_Yes",
+    "Device_Protection_No_internet_service",
+    "Device_Protection_Yes",
+    "Tech_Support_No_internet_service",
+    "Tech_Support_Yes",
+    "Streaming_TV_No_internet_service",
+    "Streaming_TV_Yes",
+    "Streaming_Movies_No_internet_service",
+    "Streaming_Movies_Yes",
+    "Contract_One_year",
+    "Contract_Two_year",
+    "Paperless_Billing_Yes",
+    "Payment_Method_Credit_card_automatic",
+    "Payment_Method_Electronic_check",
+    "Payment_Method_Mailed_check"
+  ],
+  "hyperparameters": {
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "n_estimators": 150
+  },
+  "scale_pos_weight": 2.768561872909699,
+  "test_size": 0.2,
+  "random_state": 42,
+  "best_model": "catboost",
+  "models": {
+    "catboost": {
+      "label": "CatBoost",
+      "file": "catboost_model.cbm",
+      "threshold": 0.58,
+      "test_accuracy": 0.7771,
+      "test_f1": 0.6399,
+      "test_roc_auc": 0.8602,
+      "cv_f1": 0.6599
+    },
+    "xgboost": {
+      "label": "XGBoost",
+      "file": "xgboost_model.json",
+      "threshold": 0.49,
+      "test_accuracy": 0.7502,
+      "test_f1": 0.631,
+      "test_roc_auc": 0.8506,
+      "cv_f1": 0.6505
+    },
+    "lightgbm": {
+      "label": "LightGBM",
+      "file": "lightgbm_model.txt",
+      "threshold": 0.54,
+      "test_accuracy": 0.7615,
+      "test_f1": 0.6291,
+      "test_roc_auc": 0.8504,
+      "cv_f1": 0.6499
+    },
+    "logistic_regression": {
+      "label": "Logistic Regression",
+      "file": "logistic_regression_model.joblib",
+      "threshold": 0.6,
+      "test_accuracy": 0.7757,
+      "test_f1": 0.6291,
+      "test_roc_auc": 0.8476,
+      "cv_f1": 0.6495
+    },
+    "hist_gradient_boosting": {
+      "label": "HistGradientBoosting",
+      "file": "hist_gradient_boosting_model.joblib",
+      "threshold": 0.57,
+      "test_accuracy": 0.7679,
+      "test_f1": 0.6288,
+      "test_roc_auc": 0.8503,
+      "cv_f1": 0.6489
+    },
+    "random_forest": {
+      "label": "Random Forest",
+      "file": "random_forest_model.joblib",
+      "threshold": 0.55,
+      "test_accuracy": 0.7665,
+      "test_f1": 0.6214,
+      "test_roc_auc": 0.8476,
+      "cv_f1": 0.6482
+    }
+  },
+  "accuracy_mode": {
+    "description": "no class weights; threshold chosen for the highest cross-validated accuracy",
+    "model": "logistic_regression",
+    "label": "Logistic Regression",
+    "file": "accuracy_mode/logistic_regression_model.joblib",
+    "threshold": 0.53,
+    "test_accuracy": 0.8034,
+    "test_recall": 0.5374,
+    "test_f1": 0.592
+  }
+}

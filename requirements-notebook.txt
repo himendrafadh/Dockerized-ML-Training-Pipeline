@@ -1,0 +1,4 @@
+# Extra packages for running notebook.ipynb (not needed by the Docker app).
+-r requirements.txt
+jupyterlab>=4.0.0
+ipykernel>=6.29.0
