@@ -1,9 +1,0 @@
-{
-  "target": "deposit",
-  "positive_class": "yes",
-  "negative_class": "no",
-  "reason": "recognised yes/true/1-style label",
-  "n_rows": 11162,
-  "n_features": 42,
-  "dropped_columns": {}
-}
