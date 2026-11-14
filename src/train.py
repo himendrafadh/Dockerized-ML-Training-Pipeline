@@ -1,7 +1,9 @@
 """Stage 2: model training with a custom (file-based) experiment logger.
 
 The model is chosen with --model (see models.py: XGBoost, Random Forest, Logistic Regression,
-HistGradientBoosting, LightGBM, CatBoost). No external tracking server is used. Every run:
+HistGradientBoosting, LightGBM, CatBoost). The decision threshold is chosen with 5-fold
+cross-validation on the training set, so the test set is only used for the final scores.
+No external tracking server is used. Every run:
     * creates   outputs/run_YYYYMMDD_HHMMSS/
     * saves     the model file, evaluation plots, shap_summary.png, run_metrics.json inside it
     * appends a row to the global  outputs/experiments_log.csv
@@ -38,6 +40,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
 from models import DEFAULT_MODEL, MODELS, ModelSpec, get_model
 
@@ -98,6 +101,26 @@ def optimize_threshold(
     best = table.loc[table["f1"].idxmax()]  # first max wins on ties
     logger.info("Best threshold=%.2f -> F1=%.4f", best.threshold, best.f1)
     return float(best.threshold), table
+
+
+def cv_threshold(
+    spec: ModelSpec, hyperparams: dict, spw: float, X_train: pd.DataFrame, y_train: pd.Series, args: argparse.Namespace
+) -> tuple[float, pd.DataFrame, str] | None:
+    """Choose the F1-optimal threshold on out-of-fold predictions of the TRAINING set.
+
+    The test set is never used to pick the threshold, so test scores stay unbiased.
+    Returns None when cross-validation is disabled or a class is too small to split.
+    """
+    folds = min(args.cv_folds, int(y_train.value_counts().min()))
+    if folds < 2:
+        return None
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=args.random_state)
+    started = time.time()
+    oof = cross_val_predict(spec.build(hyperparams, spw, args.random_state), X_train, y_train,
+                            cv=cv, method="predict_proba")[:, 1]
+    best_t, curve = optimize_threshold(y_train, oof, args.threshold_min, args.threshold_max, args.threshold_step)
+    logger.info("Threshold chosen by %d-fold cross-validation on the training set (%.1f s)", folds, time.time() - started)
+    return best_t, curve, f"{folds}-fold cross-validation on the training set"
 
 
 def evaluate(y_true: pd.Series, proba: np.ndarray, threshold: float) -> dict[str, float]:
@@ -318,6 +341,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--threshold-min", type=float, default=0.1)
     p.add_argument("--threshold-max", type=float, default=0.9)
     p.add_argument("--threshold-step", type=float, default=0.01)
+    p.add_argument("--cv-folds", type=int, default=5,
+                   help="Folds used to choose the threshold on the training set (0 = choose on the test set)")
     p.add_argument("--shap-samples", type=int, default=2000, help="Max test rows used for SHAP")
     p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--log-level", default="INFO")
@@ -338,16 +363,25 @@ def main() -> None:
     spw = compute_scale_pos_weight(y_train)
     hyperparams = {"max_depth": args.max_depth, "learning_rate": args.learning_rate, "n_estimators": args.n_estimators}
     used = {name: value for name, value in {**hyperparams, "scale_pos_weight": spw}.items() if name in spec.uses}
-    model = spec.build(hyperparams, spw, args.random_state)
     logger.info("Training %s with %s", spec.label, {k: round(v, 4) if isinstance(v, float) else v for k, v in used.items()} or "default settings")
+
+    # 1) Decision threshold from cross-validation on the training set only.
+    chosen = cv_threshold(spec, hyperparams, spw, X_train, y_train, args)
+
+    # 2) Final model on the whole training set, evaluated once on the test set.
+    model = spec.build(hyperparams, spw, args.random_state)
     started = time.time()
     model.fit(X_train, y_train)
     logger.info("Training took %.1f s", time.time() - started)
-
-    # Probabilities -> F1-optimal threshold -> final metrics.
     proba = model.predict_proba(X_test)[:, 1]
-    best_t, curve = optimize_threshold(y_test, proba, args.threshold_min, args.threshold_max, args.threshold_step)
-    logger.info("Final metrics at threshold %.2f:", best_t)
+
+    if chosen is None:  # CV disabled (--cv-folds 0) or a class with fewer than 2 training rows
+        best_t, curve = optimize_threshold(y_test, proba, args.threshold_min, args.threshold_max, args.threshold_step)
+        threshold_source = "test set (cross-validation disabled or not possible; scores are optimistic)"
+        logger.warning("Threshold chosen on the test set: %s", threshold_source)
+    else:
+        best_t, curve, threshold_source = chosen
+    logger.info("Final metrics on the test set at threshold %.2f:", best_t)
     metrics = evaluate(y_test, proba, best_t)
 
     # ---- DIY logging: per-run folder + global CSV ----
@@ -375,6 +409,7 @@ def main() -> None:
         "run_id": run_id, "target": args.target, "model": spec.key, "model_label": spec.label,
         "model_file": spec.filename, "hyperparameters": used, **labels,
         "excluded_columns": load_excluded_columns(args.train_path), "best_threshold": best_t,
+        "threshold_source": threshold_source,
         "metrics": metrics, "plots": saved_plots, "n_train": len(X_train), "n_test": len(X_test),
         "n_features": X_train.shape[1], "threshold_curve": curve.to_dict(orient="records"),
     }, indent=2))

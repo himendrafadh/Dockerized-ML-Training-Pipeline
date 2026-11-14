@@ -141,6 +141,8 @@ const I18N = {
     "th.heading": "Why {t} and not 0.50",
     "th.p1": "The model outputs a probability. A row is labelled <strong>{pos}</strong> when that probability is at least the threshold.",
     "th.p2": "The pipeline tried every threshold from 0.10 to 0.90 in steps of 0.01 on the hold-out set and kept the one with the highest F1 score.",
+    "th.p2cv": "The pipeline tried every threshold from 0.10 to 0.90 in steps of 0.01 on 5-fold cross-validation predictions of the training set, and kept the one with the highest F1 score. The chart shows those cross-validation scores. The test set was not used to pick the threshold, so the scores on this page are not biased by it.",
+    "th.p2old": "The threshold of this run was picked directly on the test set (runs made before cross-validation was added, or a dataset too small for it), so its scores are slightly optimistic.",
     "th.aria": "F1 score by decision threshold. Highest F1 {f} at threshold {t}.",
     "th.axis": "Decision threshold",
     "th.marker": "F1 {f} at {t}",
@@ -339,6 +341,8 @@ const I18N = {
     "th.heading": "Kenapa {t}, bukan 0.50",
     "th.p1": "Model menghasilkan probabilitas. Sebuah baris dilabeli <strong>{pos}</strong> jika probabilitasnya minimal sebesar threshold.",
     "th.p2": "Pipeline mencoba setiap threshold dari 0.10 sampai 0.90 dengan langkah 0.01 pada data hold-out, lalu memilih yang skor F1-nya tertinggi.",
+    "th.p2cv": "Pipeline mencoba setiap threshold dari 0.10 sampai 0.90 dengan langkah 0.01 pada prediksi validasi silang 5-fold di data latih, lalu memilih yang skor F1-nya tertinggi. Grafik menampilkan skor validasi silang tersebut. Data uji tidak dipakai untuk memilih threshold, jadi skor di halaman ini tidak bias.",
+    "th.p2old": "Threshold run ini dipilih langsung di data uji (run yang dibuat sebelum validasi silang ditambahkan, atau dataset yang terlalu kecil untuknya), jadi skornya sedikit optimistis.",
     "th.aria": "Skor F1 per threshold keputusan. F1 tertinggi {f} pada threshold {t}.",
     "th.axis": "Threshold keputusan",
     "th.marker": "F1 {f} di {t}",
@@ -1349,7 +1353,9 @@ function tabPanel(id, run) {
       <div class="prose">
         <h2 class="h3">${esc(t("th.heading", { t: num(run.best_threshold, 2) }))}</h2>
         <p>${t("th.p1", { pos: posShort })}</p>
-        <p>${esc(t("th.p2"))}</p>
+        ${run.threshold_source && run.threshold_source.includes("cross-validation on the training set")
+          ? `<p>${esc(t("th.p2cv"))}</p>`
+          : `<p>${esc(t("th.p2"))}</p><p class="note">${esc(t("th.p2old"))}</p>`}
       </div>
     </div>`;
   }

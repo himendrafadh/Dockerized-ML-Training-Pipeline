@@ -48,7 +48,7 @@ Instead of using MLflow or another tracking server, the project includes a **cus
   - saves the evaluation plots, SHAP plot, model file and full metrics (`run_metrics.json`) in a timestamped folder: `outputs/run_YYYYMMDD_HHMMSS/`
 - **Dynamic ML Optimization.**
   - calculates `scale_pos_weight = #negatives / #positives` from the training data (or uses balanced class weights for the scikit-learn models)
-  - sweeps decision thresholds from **0.1 to 0.9** on `predict_proba()` output and keeps the one with the **highest F1-Score**
+  - sweeps decision thresholds from **0.1 to 0.9** on `predict_proba()` output and keeps the one with the **highest F1-Score**; the sweep runs on **5-fold cross-validation predictions of the training set**, so the test set is only used for the final scores (`--cv-folds 0` falls back to the test set)
   - reports F1, Precision, Recall, PR-AUC and Accuracy
   - saves a confusion matrix, ROC curve and precision-recall curve, each marking the chosen threshold
 - **Explainable AI (XAI).** Generates a SHAP summary plot for every run, so you can see which features drive the model's predictions.
@@ -283,7 +283,7 @@ Keep that session open and browse to **http://localhost:8501** on your laptop.
 
 ### Troubleshooting
 
-- **Files in `outputs/` or `data/` owned by root:** the container writes to the mounted folders as root. Add `user: "1000:1000"` (your UID:GID) to the service in `docker-compose.yml`, or fix ownership with `sudo chown -R $USER: outputs data`.
+- **Permission errors in `outputs/` or `data/`:** the container runs as UID:GID `1000:1000` so the files it writes belong to you. If your user id is different (`id -u`, `id -g`), start it with `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up --build`. Files left over from older root-run containers can be fixed once with `sudo chown -R $USER: outputs data`.
 - **"Target must have exactly 2 classes":** pick a column with exactly two distinct values; the column explorer only enables those.
 - **"Each class needs at least 2 samples":** the rarer class is too small for a stratified 80/20 split. Use more data or another target.
 
@@ -307,8 +307,11 @@ Keep that session open and browse to **http://localhost:8501** on your laptop.
 
 ## Screenshots
 
-### Web UI: Column Explorer & Target Selection
-![Column explorer and target selection](docs/screenshots/ui_upload.png)
+### Web UI: Column Explorer, Target, Excluded Columns and Model Choice
+![Column explorer with target deposit, duration excluded and compare-all selected](docs/screenshots/ui_upload.png)
+
+### Model Comparison
+![Six models ranked by F1 on the same split](docs/screenshots/ui_compare.png)
 
 ### Web UI: Run Page
 ![Run page with scores and evaluation plots](docs/screenshots/ui_results.png)
@@ -316,10 +319,7 @@ Keep that session open and browse to **http://localhost:8501** on your laptop.
 ### Explainability Tab (SHAP)
 ![SHAP summary plot with reading guide](docs/screenshots/shap_summary.png)
 
-### Model Comparison
-![Six models ranked by F1 on the same split](docs/screenshots/ui_compare.png)
-
-> Screenshots taken from a run on the IBM Telco churn dataset described above.
+> Screenshots taken from a "compare all models" run on the Bank Marketing dataset (`data/raw/bank.csv`, target `deposit`, with `duration` excluded because it is only known after the call).
 
 ---
 
@@ -344,4 +344,5 @@ Keep that session open and browse to **http://localhost:8501** on your laptop.
 - **Job state is in memory.** Restarting the server forgets running jobs, but every finished run is safe on disk in `outputs/`.
 - **One registry for all models.** `src/models.py` describes each model once (builder, saver, SHAP explainer, which shared settings apply). Adding a model means adding one entry there plus its description in the UI.
 - **Model file formats.** XGBoost, LightGBM and CatBoost are saved in their own data formats. The scikit-learn models are saved with `joblib`, which is pickle-based: only load `.joblib` files you created yourself or trust.
+- **Unbiased test scores.** Choosing the threshold on the test set would make the test scores optimistic, so the app and the notebook both choose it from out-of-fold predictions on the training set. The app and the notebook therefore report identical scores for the same data and model (for example CatBoost on Telco: threshold 0.58, accuracy 0.777, F1 0.640).
 - **Comparison mode stops at the first failure.** Models trained before the failure stay in the log and are offered for comparison on the job page.

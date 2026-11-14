@@ -422,6 +422,7 @@ def get_run(run_id: str) -> dict:
         "model_file": metrics.get("model_file", MODELS[DEFAULT_MODEL].filename),
         "hyperparameters": metrics.get("hyperparameters"),
         "excluded_columns": metrics.get("excluded_columns", []),
+        "threshold_source": metrics.get("threshold_source"),  # None for runs made before CV thresholds
         "negative_class": metrics.get("negative_class"),
         "n_train": metrics.get("n_train"),
         "n_test": metrics.get("n_test"),

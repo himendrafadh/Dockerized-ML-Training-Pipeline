@@ -7,3 +7,9 @@ mlartifacts/
 outputs/
 .claude
 CLAUDE.md
+
+# Written by the web UI on every upload/run (machine-specific, not source)
+data/raw/dataset.csv
+data/raw/dataset_info.json
+data/raw/upload.tmp
+data/processed/

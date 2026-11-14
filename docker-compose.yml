@@ -3,10 +3,17 @@ services:
     build: .
     image: mini-automl-xgboost:latest
     container_name: ml-app
+    # Run as your own user so files written to ./outputs and ./data are not owned by root.
+    # Override with APP_UID / APP_GID if your user id is not 1000 (check with `id -u` / `id -g`).
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     ports:
       - "8501:8501"
     environment:
       - PYTHONUNBUFFERED=1
+      # A non-root user has no writable home in the image: point library caches at /tmp.
+      - HOME=/tmp
+      - MPLCONFIGDIR=/tmp/matplotlib
+      - NUMBA_CACHE_DIR=/tmp/numba-cache
     volumes:
       - ./outputs:/app/outputs
       - ./data:/app/data
